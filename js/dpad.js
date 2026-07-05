@@ -59,9 +59,9 @@ function initTVNavigation() {
 }
 
 function _restoreZoneFocus() {
-    if (tvFocusZone === "sidebar-header")                              _focusSidebarHeader();
-    else if (tvFocusZone === "settings" || tvFocusZone === "sidebar-cats") tvFocusSidebarItem(tvSidebarIndex);
-    else if (tvFocusZone === "channel-list")                           tvFocusRow(tvRowIndex);
+    if      (tvFocusZone === "sidebar-header") _focusSidebarHeader();
+    else if (tvFocusZone === "sidebar-cats")   tvFocusSidebarItem(tvSidebarIndex);
+    else if (tvFocusZone === "channel-list")   tvFocusRow(tvRowIndex);
     else setTVZone(tvFocusZone);
 }
 
@@ -108,20 +108,17 @@ function onTVKeyDown(e) {
                 tvRowSubZone = "row";
                 tvRowIndex = Math.max(0, Math.min(_vsChannels.length - 1, tvRowIndex + d));
                 tvFocusRow(tvRowIndex);
-            } else if (tvFocusZone === "sidebar-cats" || tvFocusZone === "settings") {
+            } else if (tvFocusZone === "sidebar-cats") {
                 const items = getSidebarFocusables();
-                if (d < 0 && tvSidebarIndex === 0) setTVZone("sidebar-tabs");
+                if (d < 0 && tvSidebarIndex === 0) setTVZone("search");
                 else { tvSidebarIndex = Math.max(0, Math.min(items.length - 1, tvSidebarIndex + d)); tvFocusSidebarItem(tvSidebarIndex); }
             } else if (tvFocusZone === "sidebar-header") {
                 if (d > 0) setTVZone("search");
             } else if (tvFocusZone === "search") {
                 if (d < 0) setTVZone("sidebar-header");
-                else setTVZone("sidebar-tabs");
+                else setTVZone("sidebar-cats");
             } else if (tvFocusZone === "tl-nav") {
                 if (d < 0) setTVZone("channel-list");
-            } else if (tvFocusZone === "sidebar-tabs") {
-                if (d < 0) setTVZone("search");
-                else setTVZone(document.querySelector(".sidebar-tab.active")?.dataset.tab === "settings" ? "settings" : "sidebar-cats");
             }
             return;
         }
@@ -131,14 +128,6 @@ function onTVKeyDown(e) {
             if (tvFocusZone === "sidebar-header") {
                 if (tvHeaderIndex > 0) { tvHeaderIndex--; _focusSidebarHeader(); }
                 return;
-            }
-            if (tvFocusZone === "settings") {
-                const focused = getSidebarFocusables()[tvSidebarIndex];
-                if (focused?.classList.contains("source-toggle-btn")) {
-                    const btns = Array.from(document.querySelectorAll("#cfg-source-type .source-toggle-btn"));
-                    const ci = btns.indexOf(focused);
-                    if (ci > 0) { tvSidebarIndex--; tvFocusSidebarItem(tvSidebarIndex); return; }
-                }
             }
             if (tvFocusZone === "channel-list") {
                 if      (tvRowSubZone === "reorder-down") { tvRowSubZone = "reorder-up";  tvFocusRowButtons(); }
@@ -151,7 +140,6 @@ function onTVKeyDown(e) {
                 else if (tvRowSubZone === "fav")    { tvRowSubZone = "row"; tvFocusRow(tvRowIndex); }
                 else                                { setTVZone("sidebar-cats"); }
             } else if (tvFocusZone === "tl-nav")      { setTVZone("channel-list"); }
-              else if (tvFocusZone === "sidebar-tabs") { _moveSidebarTab(-1); }
             return;
         }
         case _KEY.RIGHT: {
@@ -161,15 +149,7 @@ function onTVKeyDown(e) {
                 if (tvHeaderIndex < 1) { tvHeaderIndex++; _focusSidebarHeader(); }
                 return;
             }
-            if (tvFocusZone === "settings") {
-                const focused = getSidebarFocusables()[tvSidebarIndex];
-                if (focused?.classList.contains("source-toggle-btn")) {
-                    const btns = Array.from(document.querySelectorAll("#cfg-source-type .source-toggle-btn"));
-                    const ci = btns.indexOf(focused);
-                    if (ci < btns.length - 1) { tvSidebarIndex++; tvFocusSidebarItem(tvSidebarIndex); return; }
-                }
-            }
-            if (tvFocusZone === "sidebar-cats" || tvFocusZone === "settings") {
+            if (tvFocusZone === "sidebar-cats") {
                 setTVZone("channel-list");
             } else if (tvFocusZone === "channel-list") {
                 const ch    = _vsChannels[tvRowIndex];
@@ -186,7 +166,7 @@ function onTVKeyDown(e) {
                 }
                 else if (tvRowSubZone === "reorder-up") { tvRowSubZone = "reorder-down"; tvFocusRowButtons(); }
                 else setTVZone("tl-nav");
-            } else if (tvFocusZone === "sidebar-tabs") { _moveSidebarTab(1); }
+            }
             return;
         }
         case _KEY.ENTER: {
@@ -233,17 +213,8 @@ function onTVKeyDown(e) {
                 if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {} }
             } else if (tvFocusZone === "sidebar-cats") {
                 getSidebarFocusables()[tvSidebarIndex]?.click();
-            } else if (tvFocusZone === "settings") {
-                const el = getSidebarFocusables()[tvSidebarIndex];
-                if (!el) return;
-                if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
-                    el.focus();
-                    if (el.tagName !== "SELECT") { try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {} }
-                } else { el.click(); }
             } else if (tvFocusZone === "tl-nav") {
                 document.querySelector(".tl-nav-btn.tv-focus-visible")?.click();
-            } else if (tvFocusZone === "sidebar-tabs") {
-                document.querySelector(".sidebar-tab.tv-focus-visible")?.click();
             }
             return;
         }
@@ -269,7 +240,7 @@ function setTVZone(zone) {
     if (zone === "sidebar-header") {
         tvHeaderIndex = 0;
         _focusSidebarHeader();
-    } else if (zone === "sidebar-cats" || zone === "settings") {
+    } else if (zone === "sidebar-cats") {
         tvSidebarIndex = Math.max(0, Math.min(getSidebarFocusables().length - 1, tvSidebarIndex));
         tvFocusSidebarItem(tvSidebarIndex);
     } else if (zone === "channel-list") {
@@ -277,9 +248,6 @@ function setTVZone(zone) {
         tvFocusRow(tvRowIndex);
     } else if (zone === "tl-nav") {
         document.getElementById("tl-now")?.classList.add("tv-focus-visible");
-    } else if (zone === "sidebar-tabs") {
-        tvSidebarIndex = 0;
-        (document.querySelector(".sidebar-tab.active") || document.querySelector(".sidebar-tab"))?.classList.add("tv-focus-visible");
     } else if (zone === "search") {
         document.getElementById("search")?.classList.add("tv-focus-visible");
     }
@@ -298,7 +266,7 @@ function getSidebarFocusables() {
     const panel = document.querySelector(".sidebar-panel.active");
     if (!panel) return [];
     return Array.from(panel.querySelectorAll(
-        ".cat-btn, .cat-section-hdr, .cat-sub-btn, .cat-add-grp-btn, .settings-btn, .settings-input, .settings-select, .source-toggle-btn"
+        ".cat-btn, .cat-section-hdr, .cat-sub-btn, .cat-add-grp-btn"
     )).filter(el => el.offsetParent !== null);
 }
 
@@ -344,13 +312,6 @@ function scrollTVRowIntoView(idx) {
     const top  = idx * VS_ROW_H, bot = top + VS_ROW_H;
     if      (top < wrap.scrollTop)                     wrap.scrollTop = top - VS_ROW_H;
     else if (bot > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = bot - wrap.clientHeight + VS_ROW_H;
-}
-
-function _moveSidebarTab(delta) {
-    const tabs = Array.from(document.querySelectorAll(".sidebar-tab"));
-    const cur  = tabs.findIndex(t => t.classList.contains("tv-focus-visible"));
-    _clearFocus();
-    tabs[Math.max(0, Math.min(tabs.length - 1, (cur < 0 ? 0 : cur) + delta))]?.classList.add("tv-focus-visible");
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────

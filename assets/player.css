@@ -13,25 +13,29 @@
     -webkit-transform: translateZ(0); transform: translateZ(0);
 }
 #pip-wrap:hover { border-color: var(--bg5); }
-#pip-wrap:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; border: none; outline: none; }
-#pip-wrap:fullscreen           { width: 100vw; height: 100vh; border-radius: 0; border: none; outline: none; }
-#pip-wrap.pip-fullscreen-active { width: 100vw; height: 100vh; border-radius: 0; border: none; outline: none; }
 
-/* CSS fullscreen fallback — toggled on by app.js (body.fs-fallback) ONLY when it
-   measures that native fullscreen didn't actually fill the screen (e.g. webOS
-   5.40). The GUI is hidden and the player is stretched over the viewport. It is
-   never set when native fullscreen works, so other devices/simulators are
-   unaffected and playback is never disturbed. */
-body.fs-fallback #sidebar,
-body.fs-fallback #tl-header-bar,
-body.fs-fallback #channel-list-wrap,
-body.fs-fallback #preview-info { display: none !important; }
-body.fs-fallback #preview-bar { padding: 0; height: 100vh; }
-body.fs-fallback #pip-wrap {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    width: 100vw; height: 100vh; z-index: 9999;
+/* ── Fullscreen (ALL webOS versions): pure-CSS overlay ───────────────────────
+   app.js toggles body.livetv-fs. The GUI panels are hidden (all siblings —
+   never an ancestor of the video) and #pip-wrap is stretched over the
+   viewport. The native Fullscreen API is deliberately NOT used:
+     • webOS 5.40 mis-renders element fullscreen (top half only, GUI visible)
+       while still reporting fullscreen geometry, so it can't be detected away.
+     • Chromium's :fullscreen UA style forces `transform: none !important`,
+       overriding the constant translateZ(0) on #pip-wrap above — that rebuilds
+       the video's GPU layer mid-play and resets the decoder (~10s → "can't
+       play").
+   Change ONLY position/size here (never transform/will-change/display on the
+   video or its ancestors) so the video layer survives the transition. Size
+   with 100% (the real viewport), NOT 100vh — 100vh overscans on newer webOS
+   and pushes the object-fit:contain video down / clips it. */
+body.livetv-fs #sidebar,
+body.livetv-fs #tl-header-bar,
+body.livetv-fs #channel-list-wrap,
+body.livetv-fs #preview-info { display: none !important; }
+body.livetv-fs #pip-wrap {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    width: 100%; height: 100%; z-index: 9999;
     border: none; border-radius: 0;
-    -webkit-transform: none; transform: none;
 }
 
 #player { width: 100%; height: 100%; display: block; object-fit: contain; }
@@ -102,7 +106,7 @@ body.fs-fallback #pip-wrap {
 #pip-wrap:hover #pip-bar { opacity: 1; }
 
 /* Hide pip-bar entirely in fullscreen — the fs-osd takes over */
-#pip-wrap.pip-fullscreen-active #pip-bar { display: none; }
+body.livetv-fs #pip-bar { display: none; }
 
 #pip-channel-name {
     font-size: 18px; font-weight: 600; color: #fff;
@@ -174,7 +178,7 @@ body.fs-fallback #pip-wrap {
 }
 
 /* Fixed size, not clamp() — clamp() is Chromium 79+ and is dropped on webOS 5.40. */
-#pip-wrap.pip-fullscreen-active #fs-osd { font-size: 20px; }
+body.livetv-fs #fs-osd { font-size: 20px; }
 
 /* ── Stream quality + channel number badges (top-right of OSD) ──── */
 #fs-osd-top {

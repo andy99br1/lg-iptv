@@ -280,10 +280,9 @@ function xtreamBuildTimeshiftURLs(cfg, streamId, start, durationMin) {
   // Query style — colon encoded, which is correct for a query value.
   "".concat(baseUrl, "/streaming/timeshift.php?username=").concat(u, "&password=").concat(p) + "&stream=".concat(id, "&start=").concat(encodeURIComponent(startStr), "&duration=").concat(dur)];
 }
-function xtreamBaseUrl(cfg) {
-  return _base(cfg);
-}
+
+// Same URL shape as IPTVCore.liveUrl — delegate so the logic lives in one place
+// (iptv-core.js is always loaded before this file).
 function xtreamBuildLiveURL(cfg, streamId) {
-  var baseUrl = xtreamBaseUrl(cfg);
-  return "".concat(baseUrl, "/live/").concat(encodeURIComponent(cfg.username), "/").concat(encodeURIComponent(cfg.password), "/").concat(encodeURIComponent(streamId), ".m3u8");
+  return IPTVCore.liveUrl(cfg, streamId);
 }

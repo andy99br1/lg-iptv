@@ -39,35 +39,32 @@ const CHANNEL_CACHE_KEY = "iptv_ch_v2";
 const CAT_CACHE_KEY     = "iptv_cat_v2";
 const CACHE_TTL_MS      = 4 * 60 * 60 * 1000;
 
-function loadChannelCache() {
+function _loadTTLCache(key) {
     try {
-        const raw = localStorage.getItem(CHANNEL_CACHE_KEY);
+        const raw = localStorage.getItem(key);
         if (!raw) return null;
         const { ts, data } = JSON.parse(raw);
         return Date.now() - ts > CACHE_TTL_MS ? null : data;
     } catch { return null; }
 }
-function loadCatCache() {
-    try {
-        const raw = localStorage.getItem(CAT_CACHE_KEY);
-        if (!raw) return null;
-        const { ts, data } = JSON.parse(raw);
-        return Date.now() - ts > CACHE_TTL_MS ? null : data;
-    } catch { return null; }
+function loadChannelCache() { return _loadTTLCache(CHANNEL_CACHE_KEY); }
+function loadCatCache()     { return _loadTTLCache(CAT_CACHE_KEY); }
+
+function _slimChannels(channels, withEpgId) {
+    return channels.map(ch => {
+        const slim = { stream_id: ch.stream_id, name: ch.name, category_id: ch.category_id, stream_icon: ch.stream_icon || "" };
+        if (withEpgId) slim.epg_channel_id = ch.epg_channel_id || "";
+        return slim;
+    });
 }
 function saveChannelCache(channels, categories) {
     try {
-        const slim = channels.map(({ stream_id, name, category_id, stream_icon, epg_channel_id }) =>
-            ({ stream_id, name, category_id, stream_icon: stream_icon || "", epg_channel_id: epg_channel_id || "" }));
-        localStorage.setItem(CHANNEL_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: slim }));
+        localStorage.setItem(CHANNEL_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: _slimChannels(channels, true) }));
         localStorage.setItem(CAT_CACHE_KEY,     JSON.stringify({ ts: Date.now(), data: categories }));
     } catch {
+        // Quota hit — drop the EPG cache and retry with the slimmest shape.
         try { localStorage.removeItem("iptv_epg_v2"); } catch {}
-        try {
-            const slim = channels.map(({ stream_id, name, category_id, stream_icon }) =>
-                ({ stream_id, name, category_id, stream_icon: stream_icon || "" }));
-            localStorage.setItem(CHANNEL_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: slim }));
-        } catch {}
+        try { localStorage.setItem(CHANNEL_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: _slimChannels(channels, false) })); } catch {}
     }
 }
 
@@ -495,8 +492,6 @@ let _osdTimer = null;
 
 function setupPip() {
     document.getElementById("pip-fullscreen-btn").addEventListener("click", e => { e.stopPropagation(); toggleFullscreen(); });
-    document.addEventListener("fullscreenchange",       onFullscreenChange);
-    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     const osd = document.createElement("div");
     osd.id = "fs-osd";
     osd.innerHTML = `
@@ -523,79 +518,37 @@ function setupPip() {
     document.getElementById("pip-wrap").appendChild(osd);
 }
 
-// Fullscreen uses the native Fullscreen API as the primary path — it drives the
-// TV's hardware video plane correctly on devices and the simulators. We track
-// our own state (_fsActive) so Back always knows it's fullscreen (some webOS
-// versions, e.g. 5.40, don't report document.fullscreenElement). On those builds
-// native fullscreen also silently fails to fill the screen, so a short moment
-// after requesting it we MEASURE whether the player actually covered the
-// viewport; only if it did NOT do we switch on a CSS fallback (body.fs-fallback)
-// that hides the GUI and stretches the player. Using geometry — plus the native
-// flag when present — means the fallback can't misfire on devices/simulators
-// where native fullscreen works, so playback there is never disturbed.
+// Fullscreen — ONE implementation for every webOS version: a pure-CSS overlay.
+// body.livetv-fs stretches #pip-wrap over the viewport and hides the GUI panels
+// (all siblings — never an ancestor of the video, so the video is never
+// unrendered). The SAME <video>/stream is kept — no second connection — so
+// single-stream accounts are unaffected.
+//
+// The native Fullscreen API is deliberately not used anywhere:
+//   • webOS 5.40 mis-renders element fullscreen (video fills only the top half,
+//     GUI stays visible) while still REPORTING fullscreen geometry — so it
+//     can't be feature-detected or geometry-checked away.
+//   • Chromium's :fullscreen UA stylesheet applies `transform: none !important`
+//     to the fullscreened element, overriding #pip-wrap's constant
+//     translateZ(0). That rebuilds the video's compositing layer mid-play and
+//     resets the hardware decoder on webOS (plays ~10s → "can't play").
+// The CSS overlay changes only position/size/z-index — the transform is
+// identical in both states, so the video layer is never rebuilt. #pip-wrap has
+// no ancestor with transform/filter/contain (verified), so position:fixed is
+// truly viewport-relative on every Chromium back to 38.
 let _fsActive = false;
-let _fsCheckTimer = null;
 
-function isFullscreen() {
-    return _fsActive || !!(document.fullscreenElement || document.webkitFullscreenElement);
-}
+function isFullscreen() { return _fsActive; }
 
 function toggleFullscreen() {
-    const pip = document.getElementById("pip-wrap");
-    if (!pip) return;
-    if (!isFullscreen()) _enterFullscreen(pip); else _exitFullscreen(pip);
-}
-
-function _enterFullscreen(pip) {
-    _fsActive = true;
+    _fsActive = !_fsActive;
+    document.body.classList.toggle("livetv-fs", _fsActive);
     const btn = document.getElementById("pip-fullscreen-btn");
-    if (btn) btn.title = "Exit fullscreen";
-    const req = pip.requestFullscreen || pip.webkitRequestFullscreen;
-    if (req) { try { const rp = req.call(pip); if (rp && rp.catch) rp.catch(function () {}); } catch (e) {} }
-    if (currentChannel) showOSD();
-    clearTimeout(_fsCheckTimer);
-    _fsCheckTimer = setTimeout(_checkFsCoverage, 350);
-}
-
-// Did the player actually fill the screen? If native fullscreen is reported, or
-// the element measures as covering the viewport, we're good — no fallback. Only
-// when neither holds (native fullscreen silently didn't engage) do we apply the
-// CSS fallback. Measured BEFORE adding the sizing class so the reading is real.
-function _checkFsCoverage() {
-    if (!_fsActive) return;
-    const pip = document.getElementById("pip-wrap");
-    if (!pip) return;
-    const nativeActive = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    const r = pip.getBoundingClientRect();
-    const geomCovers = r.width >= window.innerWidth - 8 && r.height >= window.innerHeight - 8;
-    pip.classList.add("pip-fullscreen-active");
-    document.body.classList.toggle("fs-fallback", !(nativeActive || geomCovers));
-    if (currentChannel) showOSD();
-}
-
-function _exitFullscreen(pip) {
-    _fsActive = false;
-    clearTimeout(_fsCheckTimer);
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-        const ex = document.exitFullscreen || document.webkitExitFullscreen;
-        if (ex) { try { ex.call(document); } catch (e) {} }
-    }
-    if (pip) pip.classList.remove("pip-fullscreen-active");
-    document.body.classList.remove("fs-fallback");
-    const btn = document.getElementById("pip-fullscreen-btn");
-    if (btn) btn.title = "Fullscreen";
-    setTVZone("channel-list");
-}
-
-// Keep state/UI in sync with the platform; if native fullscreen does engage
-// (even late), drop any CSS fallback so the two never fight.
-function onFullscreenChange() {
-    const native = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    if (native) {
-        document.body.classList.remove("fs-fallback");
+    if (btn) btn.title = _fsActive ? "Exit fullscreen" : "Fullscreen";
+    if (_fsActive) {
         if (currentChannel) showOSD();
-    } else if (_fsActive) {
-        _exitFullscreen(document.getElementById("pip-wrap"));
+    } else {
+        setTVZone("channel-list");
     }
 }
 
@@ -642,13 +595,7 @@ function showOSD() {
     let nowTitle = "", nowTime = "", nextTitle = "", nextTime = "", progress = 0;
 
     if (listings && listings.length) {
-        const now = Date.now();
-        const idx = listings.findIndex(e => {
-            const s = epgStart(e), n = epgEnd(e);
-            return now >= s && now < n;
-        });
-        const cur  = listings[idx >= 0 ? idx     : 0];
-        const next = listings[idx >= 0 ? idx + 1 : 1];
+        const { cur, next } = _findNowNext(listings);
         if (cur)  { nowTitle  = xtreamDecodeEPG(cur.title);  nowTime  = formatTimeRange(cur);  progress = calcProgress(cur); }
         if (next) { nextTitle = xtreamDecodeEPG(next.title); nextTime = formatTimeRange(next); }
     }
@@ -1050,10 +997,7 @@ async function selectChannel(ch) {
     }
     if (!listings?.length) { setEPG("now", "No EPG data", "", ""); showOSD(); return; }
 
-    const now = Date.now();
-    const idx = listings.findIndex(e => { const s = epgStart(e), n = epgEnd(e); return now >= s && now < n; });
-    const cur  = listings[idx >= 0 ? idx     : 0];
-    const next = listings[idx >= 0 ? idx + 1 : 1];
+    const { cur, next } = _findNowNext(listings);
     setEPG("now", xtreamDecodeEPG(cur.title), formatTimeRange(cur), xtreamDecodeEPG(cur.description));
     document.getElementById("epg-bar-fill").style.width = calcProgress(cur) + "%";
     if (next) setEPG("next", xtreamDecodeEPG(next.title), formatTimeRange(next), "");
@@ -1108,6 +1052,13 @@ function epgEnd(e) {
     const ts = e && (e.stop_timestamp || e.end_timestamp);
     if (ts) return Number(ts) * 1000;
     return parseEpgTime(e && e.end);
+}
+// Current programme + the one after it. Falls back to the first two listings
+// when nothing matches "now" (e.g. all-future or stale EPG data).
+function _findNowNext(listings) {
+    const now = Date.now();
+    const idx = listings.findIndex(e => { const s = epgStart(e), n = epgEnd(e); return now >= s && now < n; });
+    return { cur: listings[idx >= 0 ? idx : 0], next: listings[idx >= 0 ? idx + 1 : 1] };
 }
 function fmtTime(ms) { return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 function formatTimeRange(e) {
@@ -1220,15 +1171,16 @@ function mergeXMLTVIntoEpgCache() {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-window.onload = function () {
+// Run immediately: this script is loaded with `defer`, so the DOM is already
+// parsed here. Waiting for window.onload (all CSS/images fetched) only delayed
+// the first paint of the channel list on slow TVs.
+(function boot() {
     // ── Load active Xtream profile into IPTV_CONFIG (shared resolver) ──────────
     // M3U profiles are handled separately via iptv_m3u_config / iptv_source_type.
-    (function loadActiveProfile() {
-        try {
-            const cfg = (typeof IPTVCore !== "undefined") && IPTVCore.resolveConfig();
-            if (cfg && cfg.type !== "m3u" && cfg.server_url) window.IPTV_CONFIG = cfg;
-        } catch (_) {}
-    }());
+    try {
+        const cfg = (typeof IPTVCore !== "undefined") && IPTVCore.resolveConfig();
+        if (cfg && cfg.type !== "m3u" && cfg.server_url) window.IPTV_CONFIG = cfg;
+    } catch (_) {}
 
     loadXMLTVFromCache();
 
@@ -1240,4 +1192,4 @@ window.onload = function () {
     if (load("iptv_custom_epg_url", "")) {
         setTimeout(() => mergeXMLTVIntoEpgCache(), 2000);
     }
-};
+}());

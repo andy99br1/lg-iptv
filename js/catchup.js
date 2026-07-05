@@ -472,7 +472,7 @@
         var frag = document.createDocumentFragment();
         day.items.forEach(function (e) {
             var s = epgStart(e), en = epgEnd(e);
-            var dt0 = new Date(epgStart(e));
+            var dt0 = new Date(s);
             var pinned = currentCh && isPinnedSlot(currentCh.stream_id, dt0.getHours(), dt0.getMinutes());
             var row = document.createElement('div');
             row.className = 'cu-prog-row'; row.tabIndex = -1;

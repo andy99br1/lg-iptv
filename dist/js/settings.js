@@ -508,7 +508,29 @@
     setStatus('epg-load-status', 'EPG settings saved.', 'ok', 3000);
   });
 
-  /* ── Live TV category hide panel ───────────────────────────────────────── */
+  /* ── Category hide panels (Live TV + VOD) ──────────────────────────────── */
+  /* One onChange handler per storage key — adds/removes the id in the list. */
+  function hiddenCatToggler(storageKey) {
+    return function (catId, on) {
+      var h = load(storageKey, []) || [];
+      if (on) {
+        if (h.indexOf(catId) === -1) h.push(catId);
+      } else {
+        h = h.filter(function (x) {
+          return x !== catId;
+        });
+      }
+      save(storageKey, h);
+    };
+  }
+  function renderCatToggles(wrap, cats, storageKey) {
+    var hidden = new Set((load(storageKey, []) || []).map(String));
+    var onToggle = hiddenCatToggler(storageKey);
+    cats.forEach(function (cat) {
+      var id = String(cat.category_id);
+      wrap.appendChild(makeCatToggle(id, cat.category_name || 'Unnamed', hidden.has(id), onToggle));
+    });
+  }
   function renderLiveTvCats() {
     var wrap = document.getElementById('livetv-cats-wrap');
     var empty = document.getElementById('livetv-cats-empty');
@@ -522,76 +544,30 @@
     }
     empty.style.display = 'none';
     wrap.style.display = '';
-    var hidden = new Set((load('iptv_hidden_cats_live', []) || []).map(String));
     wrap.innerHTML = '';
-    cats.forEach(function (cat) {
-      var id = String(cat.category_id);
-      var name = cat.category_name || 'Unnamed';
-      wrap.appendChild(makeCatToggle(id, name, hidden.has(id), function (catId, on) {
-        var h = load('iptv_hidden_cats_live', []) || [];
-        if (on) {
-          if (h.indexOf(catId) === -1) h.push(catId);
-        } else {
-          h = h.filter(function (x) {
-            return x !== catId;
-          });
-        }
-        save('iptv_hidden_cats_live', h);
-      }));
-    });
+    renderCatToggles(wrap, cats, 'iptv_hidden_cats_live');
     rebuildFocusables();
   }
-
-  /* ── VOD category hide panel ───────────────────────────────────────────── */
   function renderVodCats() {
     var empty = document.getElementById('vod-cats-empty');
     var movieW = document.getElementById('vod-movie-cats-wrap');
     var seriesW = document.getElementById('vod-series-cats-wrap');
     movieW.innerHTML = '';
     seriesW.innerHTML = '';
-    var resolvedUrl = load('iptv_active_resolved_url', '') || '';
-    var movieCats = [];
-    var seriesCats = [];
-    if (resolvedUrl) {
-      var mc = load('vod_cats_movie_' + resolvedUrl, null);
-      var sc = load('vod_cats_series_' + resolvedUrl, null);
-      if (mc && mc.data) movieCats = mc.data;else if (Array.isArray(mc)) movieCats = mc;
-      if (sc && sc.data) seriesCats = sc.data;else if (Array.isArray(sc)) seriesCats = sc;
+    function cachedCats(key) {
+      var c = load(key, null);
+      if (c && c.data) return c.data;
+      return Array.isArray(c) ? c : [];
     }
+    var resolvedUrl = load('iptv_active_resolved_url', '') || '';
+    var movieCats = resolvedUrl ? cachedCats('vod_cats_movie_' + resolvedUrl) : [];
+    var seriesCats = resolvedUrl ? cachedCats('vod_cats_series_' + resolvedUrl) : [];
     var hasAny = movieCats.length || seriesCats.length;
     empty.style.display = hasAny ? 'none' : '';
     document.getElementById('vod-movies-wrap').style.display = movieCats.length ? '' : 'none';
     document.getElementById('vod-series-wrap').style.display = seriesCats.length ? '' : 'none';
-    var hiddenM = new Set((load('iptv_hidden_cats_vod_m', []) || []).map(String));
-    var hiddenS = new Set((load('iptv_hidden_cats_vod_s', []) || []).map(String));
-    movieCats.forEach(function (cat) {
-      var id = String(cat.category_id);
-      movieW.appendChild(makeCatToggle(id, cat.category_name || 'Unnamed', hiddenM.has(id), function (catId, on) {
-        var h = load('iptv_hidden_cats_vod_m', []) || [];
-        if (on) {
-          if (h.indexOf(catId) === -1) h.push(catId);
-        } else {
-          h = h.filter(function (x) {
-            return x !== catId;
-          });
-        }
-        save('iptv_hidden_cats_vod_m', h);
-      }));
-    });
-    seriesCats.forEach(function (cat) {
-      var id = String(cat.category_id);
-      seriesW.appendChild(makeCatToggle(id, cat.category_name || 'Unnamed', hiddenS.has(id), function (catId, on) {
-        var h = load('iptv_hidden_cats_vod_s', []) || [];
-        if (on) {
-          if (h.indexOf(catId) === -1) h.push(catId);
-        } else {
-          h = h.filter(function (x) {
-            return x !== catId;
-          });
-        }
-        save('iptv_hidden_cats_vod_s', h);
-      }));
-    });
+    renderCatToggles(movieW, movieCats, 'iptv_hidden_cats_vod_m');
+    renderCatToggles(seriesW, seriesCats, 'iptv_hidden_cats_vod_s');
     rebuildFocusables();
   }
   function makeCatToggle(id, name, isHidden, onChange) {
@@ -978,6 +954,9 @@
     if (emptyAdd && emptyAdd.offsetParent !== null) items.push(emptyAdd);
     return items;
   }
+
+  /* Containers whose controls form one horizontal D-pad row in the editor. */
+  var EDITOR_ROW_GROUPS = ['#editor-header', '#type-toggle', '.url-row', '.field-row'];
   function getEditorRows() {
     var formEl = document.getElementById('editor-form');
     if (!formEl || formEl.hidden) return [];
@@ -989,41 +968,16 @@
     var all = Array.from(formEl.querySelectorAll('input, select, button')).filter(visible);
     all.forEach(function (el) {
       if (seen.indexOf(el) !== -1) return;
-      var editorHeader = el.closest('#editor-header');
-      if (editorHeader) {
-        var siblings = Array.from(editorHeader.querySelectorAll('input, select, button')).filter(visible);
-        siblings.forEach(function (s) {
-          seen.push(s);
-        });
-        rows.push(siblings);
-        return;
-      }
-      var typeToggle = el.closest('#type-toggle');
-      if (typeToggle) {
-        var siblings = Array.from(typeToggle.querySelectorAll('button')).filter(visible);
-        siblings.forEach(function (s) {
-          seen.push(s);
-        });
-        rows.push(siblings);
-        return;
-      }
-      var urlRow = el.closest('.url-row');
-      if (urlRow) {
-        var siblings = Array.from(urlRow.querySelectorAll('input, select, button')).filter(visible);
-        siblings.forEach(function (s) {
-          seen.push(s);
-        });
-        rows.push(siblings);
-        return;
-      }
-      var fieldRow = el.closest('.field-row');
-      if (fieldRow) {
-        var siblings = Array.from(fieldRow.querySelectorAll('input, select, button')).filter(visible);
-        siblings.forEach(function (s) {
-          seen.push(s);
-        });
-        rows.push(siblings);
-        return;
+      for (var i = 0; i < EDITOR_ROW_GROUPS.length; i++) {
+        var group = el.closest(EDITOR_ROW_GROUPS[i]);
+        if (group) {
+          var siblings = Array.from(group.querySelectorAll('input, select, button')).filter(visible);
+          siblings.forEach(function (s) {
+            seen.push(s);
+          });
+          rows.push(siblings);
+          return;
+        }
       }
       seen.push(el);
       rows.push([el]);

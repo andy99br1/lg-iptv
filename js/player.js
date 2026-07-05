@@ -45,6 +45,7 @@ class IPTVPlayer {
         this._tok      = 0;   // bumped per attempt   — neutralises a previous tier
         this._manual   = false;
         this._lowQuality = false;
+        this._playingSince = 0;   // Date.now() once the current attempt reaches 'playing'
         this._diag     = [];
         this._codecs   = null;
         this._res      = "";
@@ -225,19 +226,35 @@ class IPTVPlayer {
         if (!a) { this.destroyHls(); this._showError(); return; }
         const tok = this._tok;
         this._activeEngine = a.label;
+        this._playingSince = 0;   // set on 'playing'; drives mid-play recovery
         if (a.engine === "hls") this._playHls(gen, tok, a.url);
         else                    this._playNative(gen, tok, a.url);
     }
 
     // Auto-advance to the next tier — disabled in manual mode (the user drives).
+    // Exception: if THIS engine had already been playing steadily (5s+) and then
+    // died — a platform pipeline hiccup (e.g. some webOS builds reset the
+    // decoder on a video resize) or a brief network drop — restart the SAME
+    // engine instead of cascading through the tiers to the error banner. Live
+    // streams simply rejoin at the live edge. A stream that dies again within
+    // 5s of recovering falls through to the normal tier advance.
     _next(gen, reason) {
         if (gen !== this._gen) return;
         this._clearWatchdog();
         if (reason) this._diag.push(reason);
         if (this._manual) return;
         this._tok++;
-        this._attemptIdx++;
         this.destroyHls();
+        if (this._playingSince && Date.now() - this._playingSince > 5000) {
+            this._diag.push("reconnect " + this._activeEngine);
+            this._msg("Reconnecting…");
+            const self = this, tok = this._tok;
+            setTimeout(function () {
+                if (gen === self._gen && tok === self._tok) self._runAttempt(gen);
+            }, 700);
+            return;
+        }
+        this._attemptIdx++;
         this._runAttempt(gen);
     }
 
@@ -270,7 +287,7 @@ class IPTVPlayer {
     _playNative(gen, tok, url) {
         if (!this._alive(gen, tok)) return;
         const self = this;
-        const onSuccess = function () { if (self._alive(gen, tok)) { self._clearWatchdog(); self._hideMsg(); } };
+        const onSuccess = function () { if (self._alive(gen, tok)) { self._clearWatchdog(); self._hideMsg(); self._playingSince = Date.now(); } };
         const onData    = function () { if (self._alive(gen, tok)) self._clearWatchdog(); };   // data flowing → not a stall
         const onMeta    = function () { if (self._alive(gen, tok) && self.video.videoWidth) self._res = self.video.videoWidth + "×" + self.video.videoHeight; };
         const onError   = function () { if (self._alive(gen, tok)) self._next(gen, "Native: " + _mediaErrText(self.video.error)); };
@@ -335,7 +352,7 @@ class IPTVPlayer {
             if (data.reason) d += " (" + data.reason + ")";
             self._next(gen, "HLS: " + d);
         });
-        this.video.addEventListener("playing",    function () { if (self._alive(gen, tok)) { self._clearWatchdog(); self._hideMsg(); } }, { once: true });
+        this.video.addEventListener("playing",    function () { if (self._alive(gen, tok)) { self._clearWatchdog(); self._hideMsg(); self._playingSince = Date.now(); } }, { once: true });
         this.video.addEventListener("loadeddata", function () { if (self._alive(gen, tok)) self._clearWatchdog(); }, { once: true });
         this._arm(gen, tok);
     }

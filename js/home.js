@@ -76,7 +76,10 @@ function _updateDate() {
     el.textContent = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 }
 
-window.addEventListener("load", () => {
+// Run immediately: this script sits at the end of <body>, so the tiles above
+// are already parsed. Waiting for window "load" only delayed the splash-screen
+// dismissal and D-pad readiness.
+(function () {
     // Wire up click handlers
     TILES.forEach(id => {
         document.getElementById(id)?.addEventListener("click", () => _navigate(id));
@@ -95,5 +98,5 @@ window.addEventListener("load", () => {
     if (typeof webOSSystem !== "undefined" && typeof webOSSystem.notifyAppLoaded === "function") {
         webOSSystem.notifyAppLoaded();
     }
-});
+}());
 

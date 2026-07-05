@@ -74,8 +74,8 @@
     /* ── State ───────────────────────────────────────────────────────── */
     var activeType = 'movie';
     var hidden = {
-        movie:  new Set((function () { try { return JSON.parse(localStorage.getItem('iptv_hidden_cats_vod_m') || '[]'); } catch (e) { return []; } }()).map(String)),
-        series: new Set((function () { try { return JSON.parse(localStorage.getItem('iptv_hidden_cats_vod_s') || '[]'); } catch (e) { return []; } }()).map(String))
+        movie:  new Set((IPTVCore.load('iptv_hidden_cats_vod_m', []) || []).map(String)),
+        series: new Set((IPTVCore.load('iptv_hidden_cats_vod_s', []) || []).map(String))
     };
     var cats = { movie: null, series: null };     // category arrays per type
     var RAIL_CAP = 20;                            // max cards rendered per rail

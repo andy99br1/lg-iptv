@@ -142,6 +142,18 @@
   var controls = ['ctrl-rewind', 'ctrl-play', 'ctrl-forward', 'ctrl-mute', 'ctrl-subs', 'ctrl-fullscreen'].map(function (id) {
     return document.getElementById(id);
   }).filter(Boolean);
+  /* webOS apps already run fullscreen, and the native Fullscreen API
+     mis-renders on some versions (e.g. 5.40) — hide the toggle on TV.
+     It stays available for desktop-browser testing. */
+  if (/Web0S/i.test(navigator.userAgent || '')) {
+    var fsBtn = document.getElementById('ctrl-fullscreen');
+    if (fsBtn) {
+      fsBtn.style.display = 'none';
+      controls = controls.filter(function (el) {
+        return el !== fsBtn;
+      });
+    }
+  }
   var backBtn = document.getElementById('player-back-btn');
   var focusRow = backBtn ? [backBtn].concat(controls) : controls.slice();
   var focusIdx = focusRow.indexOf(document.getElementById('ctrl-play'));

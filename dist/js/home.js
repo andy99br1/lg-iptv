@@ -94,7 +94,11 @@ function _updateDate() {
     month: "long"
   });
 }
-window.addEventListener("load", function () {
+
+// Run immediately: this script sits at the end of <body>, so the tiles above
+// are already parsed. Waiting for window "load" only delayed the splash-screen
+// dismissal and D-pad readiness.
+(function () {
   // Wire up click handlers
   TILES.forEach(function (id) {
     var _document$getElementB3;
@@ -118,4 +122,4 @@ window.addEventListener("load", function () {
   if (typeof webOSSystem !== "undefined" && typeof webOSSystem.notifyAppLoaded === "function") {
     webOSSystem.notifyAppLoaded();
   }
-});
+})();

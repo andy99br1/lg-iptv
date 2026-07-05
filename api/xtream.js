@@ -146,11 +146,8 @@ function xtreamBuildTimeshiftURLs(cfg, streamId, start, durationMin) {
     ];
 }
 
-function xtreamBaseUrl(cfg) {
-    return _base(cfg);
-}
-
+// Same URL shape as IPTVCore.liveUrl — delegate so the logic lives in one place
+// (iptv-core.js is always loaded before this file).
 function xtreamBuildLiveURL(cfg, streamId) {
-    const baseUrl = xtreamBaseUrl(cfg);
-    return `${baseUrl}/live/${encodeURIComponent(cfg.username)}/${encodeURIComponent(cfg.password)}/${encodeURIComponent(streamId)}.m3u8`;
+    return IPTVCore.liveUrl(cfg, streamId);
 }

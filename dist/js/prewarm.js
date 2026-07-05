@@ -3,21 +3,13 @@
 // prewarm.js — silently refreshes the channel cache while the user is on the
 // homepage so Live TV opens instantly without a loading spinner.
 // Only runs for Xtream sources (M3U playlists can be large and are best
-// fetched on demand).
+// fetched on demand). Requires iptv-core.js, loaded before this on index.html.
 
 (function () {
   var CHANNEL_CACHE_KEY = "iptv_ch_v2";
   var CAT_CACHE_KEY = "iptv_cat_v2";
   var CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours — matches app.js
 
-  function load(key, fallback) {
-    try {
-      var v = localStorage.getItem(key);
-      return v != null ? JSON.parse(v) : fallback;
-    } catch (e) {
-      return fallback;
-    }
-  }
   function save(key, val) {
     try {
       localStorage.setItem(key, JSON.stringify(val));
@@ -31,24 +23,6 @@
     } catch (e) {
       return false;
     }
-  }
-  function getCfg() {
-    var profiles = load("iptv_profiles", null);
-    if (profiles && profiles.length) {
-      var activeId = load("iptv_active_profile", null);
-      var profile = activeId && profiles.find(function (p) {
-        return p.id === activeId;
-      }) || profiles[0];
-      if (profile && profile.type !== "m3u") {
-        var resolvedUrl = load("iptv_active_resolved_url", null);
-        return {
-          server_url: resolvedUrl || profile.server_urls && profile.server_urls[0] || "",
-          username: profile.username || "",
-          password: profile.password || ""
-        };
-      }
-    }
-    return null;
   }
   function fetchJSON(url) {
     var ctrl = new AbortController();
@@ -67,13 +41,11 @@
     });
   }
   function run() {
-    if (load("iptv_source_type", "xtream") !== "xtream") return;
+    if (IPTVCore.load("iptv_source_type", "xtream") !== "xtream") return;
     if (cacheIsValid()) return;
-    var cfg = getCfg();
-    if (!cfg || !cfg.server_url) return;
-    var base = cfg.server_url.replace(/\/+$/, "");
-    var auth = "username=" + encodeURIComponent(cfg.username) + "&password=" + encodeURIComponent(cfg.password);
-    Promise.all([fetchJSON(base + "/player_api.php?" + auth + "&action=get_live_streams"), fetchJSON(base + "/player_api.php?" + auth + "&action=get_live_categories")]).then(function (results) {
+    var cfg = IPTVCore.resolveConfig();
+    if (!cfg || cfg.type === "m3u" || !cfg.server_url) return;
+    Promise.all([fetchJSON(IPTVCore.apiUrl(cfg, "action=get_live_streams")), fetchJSON(IPTVCore.apiUrl(cfg, "action=get_live_categories"))]).then(function (results) {
       var channels = results[0];
       var categories = results[1];
       if (!Array.isArray(channels) || !channels.length) return;

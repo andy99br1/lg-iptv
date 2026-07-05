@@ -63,7 +63,7 @@ function initTVNavigation() {
   });
 }
 function _restoreZoneFocus() {
-  if (tvFocusZone === "sidebar-header") _focusSidebarHeader();else if (tvFocusZone === "settings" || tvFocusZone === "sidebar-cats") tvFocusSidebarItem(tvSidebarIndex);else if (tvFocusZone === "channel-list") tvFocusRow(tvRowIndex);else setTVZone(tvFocusZone);
+  if (tvFocusZone === "sidebar-header") _focusSidebarHeader();else if (tvFocusZone === "sidebar-cats") tvFocusSidebarItem(tvSidebarIndex);else if (tvFocusZone === "channel-list") tvFocusRow(tvRowIndex);else setTVZone(tvFocusZone);
 }
 function _keyCode(e) {
   return e.keyCode || e.which;
@@ -139,21 +139,18 @@ function onTVKeyDown(e) {
           tvRowSubZone = "row";
           tvRowIndex = Math.max(0, Math.min(_vsChannels.length - 1, tvRowIndex + d));
           tvFocusRow(tvRowIndex);
-        } else if (tvFocusZone === "sidebar-cats" || tvFocusZone === "settings") {
+        } else if (tvFocusZone === "sidebar-cats") {
           var items = getSidebarFocusables();
-          if (d < 0 && tvSidebarIndex === 0) setTVZone("sidebar-tabs");else {
+          if (d < 0 && tvSidebarIndex === 0) setTVZone("search");else {
             tvSidebarIndex = Math.max(0, Math.min(items.length - 1, tvSidebarIndex + d));
             tvFocusSidebarItem(tvSidebarIndex);
           }
         } else if (tvFocusZone === "sidebar-header") {
           if (d > 0) setTVZone("search");
         } else if (tvFocusZone === "search") {
-          if (d < 0) setTVZone("sidebar-header");else setTVZone("sidebar-tabs");
+          if (d < 0) setTVZone("sidebar-header");else setTVZone("sidebar-cats");
         } else if (tvFocusZone === "tl-nav") {
           if (d < 0) setTVZone("channel-list");
-        } else if (tvFocusZone === "sidebar-tabs") {
-          var _document$querySelect;
-          if (d < 0) setTVZone("search");else setTVZone(((_document$querySelect = document.querySelector(".sidebar-tab.active")) === null || _document$querySelect === void 0 ? void 0 : _document$querySelect.dataset.tab) === "settings" ? "settings" : "sidebar-cats");
         }
         return;
       }
@@ -170,18 +167,6 @@ function onTVKeyDown(e) {
             _focusSidebarHeader();
           }
           return;
-        }
-        if (tvFocusZone === "settings") {
-          var _focused = getSidebarFocusables()[tvSidebarIndex];
-          if (_focused !== null && _focused !== void 0 && _focused.classList.contains("source-toggle-btn")) {
-            var btns = Array.from(document.querySelectorAll("#cfg-source-type .source-toggle-btn"));
-            var ci = btns.indexOf(_focused);
-            if (ci > 0) {
-              tvSidebarIndex--;
-              tvFocusSidebarItem(tvSidebarIndex);
-              return;
-            }
-          }
         }
         if (tvFocusZone === "channel-list") {
           if (tvRowSubZone === "reorder-down") {
@@ -203,8 +188,6 @@ function onTVKeyDown(e) {
           }
         } else if (tvFocusZone === "tl-nav") {
           setTVZone("channel-list");
-        } else if (tvFocusZone === "sidebar-tabs") {
-          _moveSidebarTab(-1);
         }
         return;
       }
@@ -222,19 +205,7 @@ function onTVKeyDown(e) {
           }
           return;
         }
-        if (tvFocusZone === "settings") {
-          var _focused2 = getSidebarFocusables()[tvSidebarIndex];
-          if (_focused2 !== null && _focused2 !== void 0 && _focused2.classList.contains("source-toggle-btn")) {
-            var _btns = Array.from(document.querySelectorAll("#cfg-source-type .source-toggle-btn"));
-            var _ci = _btns.indexOf(_focused2);
-            if (_ci < _btns.length - 1) {
-              tvSidebarIndex++;
-              tvFocusSidebarItem(tvSidebarIndex);
-              return;
-            }
-          }
-        }
-        if (tvFocusZone === "sidebar-cats" || tvFocusZone === "settings") {
+        if (tvFocusZone === "sidebar-cats") {
           setTVZone("channel-list");
         } else if (tvFocusZone === "channel-list") {
           var ch = _vsChannels[tvRowIndex];
@@ -261,8 +232,6 @@ function onTVKeyDown(e) {
             tvRowSubZone = "reorder-down";
             tvFocusRowButtons();
           } else setTVZone("tl-nav");
-        } else if (tvFocusZone === "sidebar-tabs") {
-          _moveSidebarTab(1);
         }
         return;
       }
@@ -341,25 +310,9 @@ function onTVKeyDown(e) {
         } else if (tvFocusZone === "sidebar-cats") {
           var _getSidebarFocusables;
           (_getSidebarFocusables = getSidebarFocusables()[tvSidebarIndex]) === null || _getSidebarFocusables === void 0 || _getSidebarFocusables.click();
-        } else if (tvFocusZone === "settings") {
-          var _el = getSidebarFocusables()[tvSidebarIndex];
-          if (!_el) return;
-          if (_el.tagName === "INPUT" || _el.tagName === "TEXTAREA" || _el.tagName === "SELECT") {
-            _el.focus();
-            if (_el.tagName !== "SELECT") {
-              try {
-                _el.setSelectionRange(_el.value.length, _el.value.length);
-              } catch (_) {}
-            }
-          } else {
-            _el.click();
-          }
         } else if (tvFocusZone === "tl-nav") {
-          var _document$querySelect2;
-          (_document$querySelect2 = document.querySelector(".tl-nav-btn.tv-focus-visible")) === null || _document$querySelect2 === void 0 || _document$querySelect2.click();
-        } else if (tvFocusZone === "sidebar-tabs") {
-          var _document$querySelect3;
-          (_document$querySelect3 = document.querySelector(".sidebar-tab.tv-focus-visible")) === null || _document$querySelect3 === void 0 || _document$querySelect3.click();
+          var _document$querySelect;
+          (_document$querySelect = document.querySelector(".tl-nav-btn.tv-focus-visible")) === null || _document$querySelect === void 0 || _document$querySelect.click();
         }
         return;
       }
@@ -402,7 +355,7 @@ function setTVZone(zone) {
   if (zone === "sidebar-header") {
     tvHeaderIndex = 0;
     _focusSidebarHeader();
-  } else if (zone === "sidebar-cats" || zone === "settings") {
+  } else if (zone === "sidebar-cats") {
     tvSidebarIndex = Math.max(0, Math.min(getSidebarFocusables().length - 1, tvSidebarIndex));
     tvFocusSidebarItem(tvSidebarIndex);
   } else if (zone === "channel-list") {
@@ -411,10 +364,6 @@ function setTVZone(zone) {
   } else if (zone === "tl-nav") {
     var _document$getElementB;
     (_document$getElementB = document.getElementById("tl-now")) === null || _document$getElementB === void 0 || _document$getElementB.classList.add("tv-focus-visible");
-  } else if (zone === "sidebar-tabs") {
-    var _ref;
-    tvSidebarIndex = 0;
-    (_ref = document.querySelector(".sidebar-tab.active") || document.querySelector(".sidebar-tab")) === null || _ref === void 0 || _ref.classList.add("tv-focus-visible");
   } else if (zone === "search") {
     var _document$getElementB2;
     (_document$getElementB2 = document.getElementById("search")) === null || _document$getElementB2 === void 0 || _document$getElementB2.classList.add("tv-focus-visible");
@@ -434,7 +383,7 @@ function _focusSidebarHeader() {
 function getSidebarFocusables() {
   var panel = document.querySelector(".sidebar-panel.active");
   if (!panel) return [];
-  return Array.from(panel.querySelectorAll(".cat-btn, .cat-section-hdr, .cat-sub-btn, .cat-add-grp-btn, .settings-btn, .settings-input, .settings-select, .source-toggle-btn")).filter(function (el) {
+  return Array.from(panel.querySelectorAll(".cat-btn, .cat-section-hdr, .cat-sub-btn, .cat-add-grp-btn")).filter(function (el) {
     return el.offsetParent !== null;
   });
 }
@@ -492,15 +441,6 @@ function scrollTVRowIntoView(idx) {
   var top = idx * VS_ROW_H,
     bot = top + VS_ROW_H;
   if (top < wrap.scrollTop) wrap.scrollTop = top - VS_ROW_H;else if (bot > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = bot - wrap.clientHeight + VS_ROW_H;
-}
-function _moveSidebarTab(delta) {
-  var _tabs$Math$max;
-  var tabs = Array.from(document.querySelectorAll(".sidebar-tab"));
-  var cur = tabs.findIndex(function (t) {
-    return t.classList.contains("tv-focus-visible");
-  });
-  _clearFocus();
-  (_tabs$Math$max = tabs[Math.max(0, Math.min(tabs.length - 1, (cur < 0 ? 0 : cur) + delta))]) === null || _tabs$Math$max === void 0 || _tabs$Math$max.classList.add("tv-focus-visible");
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
