@@ -32,6 +32,18 @@ body.livetv-fs #sidebar,
 body.livetv-fs #tl-header-bar,
 body.livetv-fs #channel-list-wrap,
 body.livetv-fs #preview-info { display: none !important; }
+/* webOS 5.x (Chrome 68): old Blink wrongly makes #preview-bar (will-change:
+   opacity) the containing block for the fixed #pip-wrap, so the inset below
+   resolves against the bar's 381px strip — the video renders as a squished
+   band at the top. Stretching the bar itself over the viewport makes the
+   trapped coordinates equal the real ones. On engines without the bug this
+   rule is invisible (the bar sits behind the z-9999 fullscreen pip). Do NOT
+   remove the will-change from #preview-bar instead — changing compositing
+   hints on an ancestor of the video mid-life risks the decoder-reset bug. */
+body.livetv-fs #preview-bar {
+    padding: 0; border: none;
+    height: 100vh;
+}
 body.livetv-fs #pip-wrap {
     position: fixed; top: 0; right: 0; bottom: 0; left: 0;
     width: 100%; height: 100%; z-index: 9999;
