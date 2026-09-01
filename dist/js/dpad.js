@@ -8,6 +8,11 @@ var tvRowIndex = 0;
 var tvSidebarIndex = 0;
 var tvHeaderIndex = 0; // 0 = home-btn, 1 = settings-btn
 var tvRowSubZone = "row";
+/* "item" | "star" — a sidebar category row is a name plus a ★ that favourites
+   the whole category, exactly like a channel row. RIGHT steps onto the star,
+   RIGHT again continues to the channel list, so the rule the user learned in
+   the channel list is the same one here. */
+var tvSidebarSubZone = "item";
 var _fsEnterTimer = null;
 var _rowEnterTimer = null;
 var _rowEnterSid = null;
@@ -65,14 +70,18 @@ function initTVNavigation() {
 function _restoreZoneFocus() {
   if (tvFocusZone === "sidebar-header") _focusSidebarHeader();else if (tvFocusZone === "sidebar-cats") tvFocusSidebarItem(tvSidebarIndex);else if (tvFocusZone === "channel-list") tvFocusRow(tvRowIndex);else setTVZone(tvFocusZone);
 }
+
+/* Delegates to Dom, which also maps named keys (`e.key`) for environments that
+   dispatch those with keyCode 0 — the simulator among them. */
 function _keyCode(e) {
-  return e.keyCode || e.which;
+  return typeof Dom !== "undefined" ? Dom.keyCode(e) : e.keyCode || e.which;
 }
 function _isBack(e) {
   return _keyCode(e) === 461;
 }
 
 // webOS TV remote key codes
+// CH_UP/CH_DN come in two flavours — see the note on Dom.KEY. Both are handled.
 var _KEY = {
   UP: 38,
   DOWN: 40,
@@ -80,10 +89,27 @@ var _KEY = {
   RIGHT: 39,
   ENTER: 13,
   CH_UP: 427,
-  CH_DN: 428
+  CH_DN: 428,
+  CH_UP_ALT: 33,
+  CH_DN_ALT: 34
 };
 function onTVKeyDown(e) {
   var kc = _keyCode(e);
+
+  // Multiview owns the whole remote while it's open — it's a separate screen,
+  // not an overlay on this one, so nothing below should see these presses.
+  if (typeof Multiview !== "undefined" && Multiview.isOpen()) {
+    Multiview.handleKey(e);
+    return;
+  }
+  // BLUE opens the grid. RED/GREEN/YELLOW are already taken by the player
+  // (cycle engine / diagnostics / lowest quality), so BLUE is the one colour
+  // button free to mean something at the page level.
+  if (kc === 406 /* BLUE */ || kc === 77 /* 'm' — desktop testing */) {
+    e.preventDefault();
+    if (typeof openMultiview === "function") openMultiview();
+    return;
+  }
   var modal = document.querySelector(".modal-overlay");
   var assignPanel = document.querySelector(".assign-panel");
   var ctxMenu = document.querySelector(".ctx-menu");
@@ -114,6 +140,16 @@ function onTVKeyDown(e) {
     return;
   }
   var isFs = typeof isFullscreen === "function" ? isFullscreen() : false;
+
+  /* Typing a channel number. Offered before the switch below so digits — and
+     the OK/BACK that finish or abandon a half-typed number — are claimed
+     first; it declines anything it isn't using, so nothing else is shadowed.
+     Works the same in the list and in fullscreen, which is the whole point:
+     fullscreen otherwise has no way to reach a channel by name or position. */
+  if (typeof ChannelNumbers !== "undefined" && ChannelNumbers.handleKey(e, _liveChannelTarget())) {
+    e.preventDefault();
+    return;
+  }
   switch (kc) {
     case _KEY.UP:
     case _KEY.DOWN:
@@ -143,6 +179,8 @@ function onTVKeyDown(e) {
           var items = getSidebarFocusables();
           if (d < 0 && tvSidebarIndex === 0) setTVZone("search");else {
             tvSidebarIndex = Math.max(0, Math.min(items.length - 1, tvSidebarIndex + d));
+            // Rows without a star can't hold the star sub-zone.
+            if (!_sidebarStarFor(tvSidebarIndex)) tvSidebarSubZone = "item";
             tvFocusSidebarItem(tvSidebarIndex);
           }
         } else if (tvFocusZone === "sidebar-header") {
@@ -165,6 +203,13 @@ function onTVKeyDown(e) {
           if (tvHeaderIndex > 0) {
             tvHeaderIndex--;
             _focusSidebarHeader();
+          }
+          return;
+        }
+        if (tvFocusZone === "sidebar-cats") {
+          if (tvSidebarSubZone === "star") {
+            tvSidebarSubZone = "item";
+            tvFocusSidebarItem(tvSidebarIndex);
           }
           return;
         }
@@ -206,7 +251,14 @@ function onTVKeyDown(e) {
           return;
         }
         if (tvFocusZone === "sidebar-cats") {
-          setTVZone("channel-list");
+          // Step onto the row's ★ first, if it has one.
+          if (tvSidebarSubZone !== "star" && _sidebarStarFor(tvSidebarIndex)) {
+            tvSidebarSubZone = "star";
+            tvFocusSidebarItem(tvSidebarIndex);
+          } else {
+            tvSidebarSubZone = "item";
+            setTVZone("channel-list");
+          }
         } else if (tvFocusZone === "channel-list") {
           var ch = _vsChannels[tvRowIndex];
           var entry = ch ? rowCache.get(String(ch.stream_id)) : null;
@@ -308,8 +360,18 @@ function onTVKeyDown(e) {
             } catch (_) {}
           }
         } else if (tvFocusZone === "sidebar-cats") {
-          var _getSidebarFocusables;
-          (_getSidebarFocusables = getSidebarFocusables()[tvSidebarIndex]) === null || _getSidebarFocusables === void 0 || _getSidebarFocusables.click();
+          if (tvSidebarSubZone === "star") {
+            var _sidebarStarFor2;
+            // Favouriting a category re-renders the sidebar, so re-paint
+            // the ring rather than leaving it on a discarded node.
+            (_sidebarStarFor2 = _sidebarStarFor(tvSidebarIndex)) === null || _sidebarStarFor2 === void 0 || _sidebarStarFor2.click();
+            requestAnimationFrame(function () {
+              return tvFocusSidebarItem(tvSidebarIndex);
+            });
+          } else {
+            var _getSidebarFocusables;
+            (_getSidebarFocusables = getSidebarFocusables()[tvSidebarIndex]) === null || _getSidebarFocusables === void 0 || _getSidebarFocusables.click();
+          }
         } else if (tvFocusZone === "tl-nav") {
           var _document$querySelect;
           (_document$querySelect = document.querySelector(".tl-nav-btn.tv-focus-visible")) === null || _document$querySelect === void 0 || _document$querySelect.click();
@@ -328,17 +390,65 @@ function onTVKeyDown(e) {
         tvGoBack(window._tvBackUrl);
         return;
       }
+    /* The channel rocker works everywhere on this page, fullscreen included
+       — that is the whole point of it, and it is the only way to change
+       channel in fullscreen without opening the list back up. Direction
+       matches the arrow keys: CH+ moves UP the list, the same way UP does,
+       so the two can never disagree about which way "up" is. */
+    case _KEY.CH_UP_ALT:
     case _KEY.CH_UP:
       e.preventDefault();
       channelStep(-1);
       if (isFs) showOSD();
       return;
+    case _KEY.CH_DN_ALT:
     case _KEY.CH_DN:
       e.preventDefault();
       channelStep(1);
       if (isFs) showOSD();
       return;
+    default:
+      _noteUnhandledKey(kc);
+      return;
   }
+}
+
+/* What a typed channel number means on the Live TV page: pick that row out of
+   the list currently on screen, play it, and move the focus ring to it so the
+   list agrees with what is playing. */
+function _liveChannelTarget() {
+  return {
+    total: function total() {
+      return _vsChannels.length;
+    },
+    nameAt: function nameAt(i) {
+      return _vsChannels[i] && _vsChannels[i].name || "";
+    },
+    pick: function pick(i) {
+      var ch = _vsChannels[i];
+      if (!ch) return;
+      tvRowIndex = i;
+      selectChannel(ch);
+      // In fullscreen there is no list to move a ring on — show the
+      // banner instead, so the switch is acknowledged either way.
+      if (typeof isFullscreen === "function" && isFullscreen()) showOSD();else tvFocusRow(i);
+    }
+  };
+}
+
+/* ── Unknown remote buttons ───────────────────────────────────────────────────
+   A retail TV has no console, so when a button "does nothing" there is no way
+   to discover what code it actually sent — which is exactly how the channel
+   rocker sat broken behind the wrong key codes. Remember the distinct codes
+   that reached us and did nothing; Settings → Diagnostics lists them, so the
+   next mystery button takes one look instead of a guess. */
+var _UNHANDLED_KEYS_KEY = "iptv_unhandled_keys";
+function _noteUnhandledKey(kc) {
+  if (!kc || typeof Store === "undefined") return;
+  var seen = Store.get(_UNHANDLED_KEYS_KEY, []) || [];
+  if (seen.indexOf(kc) !== -1) return; // only ever the distinct set
+  seen.unshift(kc);
+  Store.set(_UNHANDLED_KEYS_KEY, seen.slice(0, 10));
 }
 
 // ── Zone management ───────────────────────────────────────────────────────────
@@ -346,6 +456,7 @@ function onTVKeyDown(e) {
 function setTVZone(zone) {
   tvFocusZone = zone;
   tvRowSubZone = "row";
+  tvSidebarSubZone = "item";
   document.querySelectorAll(".tv-focus-visible").forEach(function (el) {
     return el.classList.remove("tv-focus-visible");
   });
@@ -392,15 +503,24 @@ function _clearFocus() {
     return el.classList.remove("tv-focus-visible");
   });
 }
+
+/* The ★ belonging to a sidebar row, or null when that row has none (the All
+   button, section headers, "+ New Group"). */
+function _sidebarStarFor(idx) {
+  var _el$closest;
+  var el = getSidebarFocusables()[idx];
+  var row = el === null || el === void 0 || (_el$closest = el.closest) === null || _el$closest === void 0 ? void 0 : _el$closest.call(el, ".cat-row");
+  return row ? row.querySelector(".cat-star-btn") : null;
+}
 function tvFocusSidebarItem(idx) {
   _clearFocus();
   var el = getSidebarFocusables()[idx];
-  if (el) {
-    el.classList.add("tv-focus-visible");
-    el.scrollIntoView({
-      block: "nearest"
-    });
-  }
+  if (!el) return;
+  var star = tvSidebarSubZone === "star" ? _sidebarStarFor(idx) : null;
+  (star || el).classList.add("tv-focus-visible");
+  el.scrollIntoView({
+    block: "nearest"
+  });
 }
 function tvFocusRow(idx) {
   _clearFocus();
@@ -424,9 +544,12 @@ function tvFocusRowButtons() {
   _clearFocus();
   var ch = _vsChannels[tvRowIndex];
   if (!ch) return;
+  /* Scroll (and render) BEFORE looking the row up — reading rowCache first
+     returned nothing for a row that had scrolled out, and the early return
+     left the buttons unfocusable. */
+  scrollTVRowIntoView(tvRowIndex);
   var entry = rowCache.get(String(ch.stream_id));
   if (!entry) return;
-  scrollTVRowIntoView(tvRowIndex);
   requestAnimationFrame(function () {
     var _entry$col4;
     document.querySelectorAll(".tv-row-active").forEach(function (el) {
@@ -436,11 +559,21 @@ function tvFocusRowButtons() {
     if (tvRowSubZone === "fav") entry.col2.classList.add("tv-focus-visible");else if (tvRowSubZone === "reorder-up" && entry.upBtn) entry.upBtn.classList.add("tv-focus-visible");else if (tvRowSubZone === "reorder-down" && entry.dnBtn) entry.dnBtn.classList.add("tv-focus-visible");else if (tvRowSubZone === "assign" && ((_entry$col4 = entry.col3) === null || _entry$col4 === void 0 || (_entry$col4 = _entry$col4.style) === null || _entry$col4 === void 0 ? void 0 : _entry$col4.display) !== "none") entry.col3.classList.add("tv-focus-visible");
   });
 }
+
+/* Scrolls the row into view AND makes sure it exists in the DOM before
+   returning. The render is driven by the wrap's scroll event, which queues its
+   own rAF a frame later than the caller's — so for any row outside the current
+   window (the numpad's jump-to-channel is the one that reaches far) the focus
+   lookup ran against a row that had not been built yet, found nothing, and
+   silently drew no ring at all. Syncing _vsScrollTop and rendering here closes
+   that window; the later scroll-driven render is then a no-op repaint. */
 function scrollTVRowIntoView(idx) {
   var wrap = document.getElementById("channel-list-wrap");
+  if (!wrap) return;
   var top = idx * VS_ROW_H,
     bot = top + VS_ROW_H;
   if (top < wrap.scrollTop) wrap.scrollTop = top - VS_ROW_H;else if (bot > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = bot - wrap.clientHeight + VS_ROW_H;
+  if (typeof _vsSyncScroll === "function") _vsSyncScroll();
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────

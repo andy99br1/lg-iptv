@@ -69,7 +69,30 @@
 
     function saveProfiles(arr) { save('iptv_profiles', arr); }
     function getActiveId()     { return load('iptv_active_profile', null); }
-    function setActiveId(id)   { save('iptv_active_profile', id); }
+
+    /* Changing the active profile invalidates the Live TV channel cache, which
+       is stored under GLOBAL keys rather than per-profile ones — so whatever is
+       in there belongs to the profile that just stopped being active.
+
+       Done here rather than at each call site because there are three ways the
+       active profile changes (saving/connecting a profile, applying a remote
+       config, and deleting the active one so the next takes over) and only the
+       first two cleared it. Deleting a profile left the previous account's
+       channel list on screen under the new account's credentials until the
+       background refresh landed.
+
+       The EPG and VOD caches need no clearing any more: they are keyed by
+       Config.scope(), so another profile's entries simply aren't found. */
+    function setActiveId(id) {
+        var changed = String(getActiveId() || '') !== String(id || '');
+        save('iptv_active_profile', id);
+        if (!changed) return;
+        try {
+            localStorage.removeItem('iptv_ch_v2');
+            localStorage.removeItem('iptv_cat_v2');
+            localStorage.removeItem('iptv_m3u_v1');
+        } catch (e) {}
+    }
 
     /* ── State ─────────────────────────────────────────────────────────────── */
     var profiles   = loadProfiles();
@@ -101,6 +124,7 @@
         if (value !== 'profiles') _inProfileContent = false;
         if (value === 'livetv')  renderLiveTvCats();
         if (value === 'vod')     renderVodCats();
+        if (value === 'diag')    renderDiagnostics();
         rebuildFocusables();
     }
 
@@ -413,6 +437,249 @@
         }(0));
     });
 
+    /* ── Display panel: interface size ─────────────────────────────────────────
+       Applied live on change so the user sees the new size while choosing,
+       instead of having to save and navigate back. assets/boot.js owns the storage
+       key and the root font-size; this is only the picker. */
+    (function populateDisplay() {
+        var sel = document.getElementById('cfg-ui-scale');
+        if (!sel || typeof UIScale === 'undefined') return;
+        var current = UIScale.get();
+        UIScale.SCALES.forEach(function (s) {
+            var opt = document.createElement('option');
+            opt.value = String(s.v);
+            opt.textContent = s.label + ' — ' + s.note;
+            /* Float compare: the stored value round-trips through a string, so
+               match on a small epsilon rather than ===. */
+            if (Math.abs(s.v - current) < 0.001) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.addEventListener('change', function () {
+            var applied = UIScale.set(sel.value);
+            setStatus('ui-scale-status', 'Interface size set to ' +
+                Math.round(applied * 100) + '%.', 'ok', 4000);
+            /* The panel just resized under the focus ring — put it back where
+               the user left it so the D-pad doesn't lose its place. */
+            requestAnimationFrame(function () {
+                if (!isProfilesPanel()) applyFocus(focusIndex);
+            });
+        });
+    }());
+
+    /* ── Player panel: playback engine ─────────────────────────────────────── */
+    var PLAYER_PREF_KEY = 'iptv_default_player';
+    var PLAYER_LAST_KEY = 'iptv_last_player';
+    var PLAYER_LABELS   = { native: 'Native', hls: 'HLS.js', ts: 'Native TS' };
+
+    /* The player reads its preference keys with a plain getItem, not JSON.parse,
+       so they must be written as bare strings — save() would JSON-quote them and
+       nothing would ever match. */
+    function loadRaw(key, fallback) {
+        try { return localStorage.getItem(key) || fallback; } catch (e) { return fallback; }
+    }
+    function saveRaw(key, val) {
+        try { localStorage.setItem(key, val); } catch (e) {}
+    }
+
+    function refreshLastUsedHint() {
+        var hint = document.getElementById('player-last-hint');
+        var sel  = document.getElementById('cfg-default-player');
+        if (!hint || !sel) return;
+        if (sel.value !== 'last') { hint.style.display = 'none'; return; }
+        var last = loadRaw(PLAYER_LAST_KEY, '');
+        hint.style.display = '';
+        hint.textContent = PLAYER_LABELS[last]
+            ? 'Currently remembering: ' + PLAYER_LABELS[last] + '.'
+            : 'Nothing remembered yet — press RED during playback to choose a player.';
+    }
+
+    (function populatePlayer() {
+        var sel = document.getElementById('cfg-default-player');
+        if (sel) {
+            sel.value = loadRaw(PLAYER_PREF_KEY, 'auto');
+            if (!sel.value) sel.value = 'auto';       // unknown stored value
+            refreshLastUsedHint();
+            sel.addEventListener('change', function () {
+                saveRaw(PLAYER_PREF_KEY, sel.value);
+                refreshLastUsedHint();
+                setStatus('player-pref-status', 'Saved — applies to the next stream you start.', 'ok', 4000);
+            });
+        }
+    }());
+
+    /* ── Subtitles panel: appearance ──────────────────────────────────────────
+       These three are the settings that make sense to choose ahead of time and
+       leave alone. Position and delay deliberately live in the player's own
+       subtitle menu instead — both are judged against what is on screen, and a
+       delay picked blind in Settings is a guess. player/engine.js reads all of
+       them when it starts, so a change here applies to the next stream.
+
+       Written raw, not JSON: the player reads them with a plain getItem, and
+       JSON-quoting would make every stored value fail its comparison. */
+    (function populateSubtitleAppearance() {
+        var pairs = [
+            ['cfg-subs-size',   'vod_subs_size',   'md',     'Text size'],
+            ['cfg-subs-style',  'vod_sub_style',   'shadow', 'Style'],
+            ['cfg-subs-colour', 'vod_sub_colour',  'white',  'Colour']
+        ];
+        pairs.forEach(function (p) {
+            var el = document.getElementById(p[0]);
+            if (!el) return;
+            el.value = loadRaw(p[1], p[2]) || p[2];
+            el.addEventListener('change', function () {
+                saveRaw(p[1], el.value);
+                setStatus('subs-appearance-status',
+                    p[3] + ' saved — applies to the next stream you start.', 'ok', 4000);
+            });
+        });
+    }());
+
+    /* ── Video output: PiP rendering mode ─────────────────────────────────────
+       Written as a bare string and read by assets/boot.js before first paint,
+       so it only takes effect on the next page load — say so rather than
+       letting the user wonder why nothing changed on this screen (there is no
+       PiP on the Settings page to change). */
+    (function populatePipMode() {
+        var sel  = document.getElementById('cfg-pip-mode');
+        var hint = document.getElementById('pip-mode-hint');
+        if (!sel) return;
+
+        var KEY = (typeof Platform !== 'undefined' && Platform.PIP_MODE_KEY) || 'iptv_pip_mode';
+
+        function describeCurrent() {
+            if (!hint || typeof Platform === 'undefined') return;
+            var detected = Platform.videoPlaneOnly
+                ? 'This TV was detected as needing compatibility mode'
+                : 'This TV was detected as not needing compatibility mode';
+            var inEffect = Platform.pipCompatActive
+                ? 'compatibility mode is in effect'
+                : 'standard rendering is in effect';
+            hint.textContent = detected + ' (' + Platform.describe() + '). Right now ' + inEffect + '.';
+        }
+
+        sel.value = loadRaw(KEY, 'auto');
+        if (!sel.value) sel.value = 'auto';
+        describeCurrent();
+
+        sel.addEventListener('change', function () {
+            saveRaw(KEY, sel.value);
+            setStatus('pip-mode-status',
+                'Saved — takes effect the next time Live TV opens.', 'ok', 5000);
+        });
+    }());
+
+    /* ── Video output: Multiview tile count ───────────────────────────────── */
+    (function populateMultiview() {
+        var sel = document.getElementById('cfg-mv-tiles');
+        if (!sel) return;
+        /* Multiview itself isn't loaded on this page, so the key is named here
+           rather than read off the module. It is the one place besides
+           livetv/multiview.js that knows it. */
+        var KEY = 'iptv_multiview_tiles';
+
+        sel.value = loadRaw(KEY, '0') || '0';
+        sel.addEventListener('change', function () {
+            saveRaw(KEY, sel.value);
+            var n = parseInt(sel.value, 10);
+            setStatus('pip-mode-status', n
+                ? 'Multiview will use ' + n + ' tiles.'
+                : 'Multiview will choose its own tile count.', 'ok', 5000);
+        });
+    }());
+
+    /* ── OpenSubtitles ─────────────────────────────────────────────────────────
+       Fields persist on every keystroke/change rather than behind a Save button:
+       there's nothing to validate locally, and "Test connection" is the honest
+       way to confirm the key works. */
+    var OS_LANGS = [
+        ['en', 'English'],    ['nl', 'Dutch'],      ['fr', 'French'],
+        ['de', 'German'],     ['es', 'Spanish'],    ['it', 'Italian'],
+        ['pt', 'Portuguese'], ['pt-br', 'Portuguese (Brazil)'],
+        ['pl', 'Polish'],     ['ru', 'Russian'],    ['tr', 'Turkish'],
+        ['ar', 'Arabic'],     ['hi', 'Hindi'],      ['zh-cn', 'Chinese'],
+        ['ja', 'Japanese'],   ['ko', 'Korean'],     ['sv', 'Swedish'],
+        ['no', 'Norwegian'],  ['da', 'Danish'],     ['fi', 'Finnish'],
+        ['el', 'Greek'],      ['he', 'Hebrew'],     ['ro', 'Romanian'],
+        ['cs', 'Czech'],      ['hu', 'Hungarian'],  ['bg', 'Bulgarian'],
+        ['uk', 'Ukrainian']
+    ];
+
+    (function populateOpenSubtitles() {
+        var keyEl  = document.getElementById('cfg-os-key');
+        var langEl = document.getElementById('cfg-os-lang');
+        var userEl = document.getElementById('cfg-os-user');
+        var passEl = document.getElementById('cfg-os-pass');
+        var testEl = document.getElementById('cfg-os-test-btn');
+        if (!keyEl || !langEl) return;
+
+        var currentLang = loadRaw('os_language', 'en') || 'en';
+        OS_LANGS.forEach(function (pair) {
+            var opt = document.createElement('option');
+            opt.value = pair[0];
+            opt.textContent = pair[1];
+            if (pair[0] === currentLang) opt.selected = true;
+            langEl.appendChild(opt);
+        });
+
+        keyEl.value  = loadRaw('os_api_key', '');
+        userEl.value = loadRaw('os_username', '');
+        passEl.value = loadRaw('os_password', '');
+
+        /* Changing the key or account invalidates any cached login token. */
+        function dropToken() {
+            try { localStorage.removeItem('os_token'); localStorage.removeItem('os_token_ts'); } catch (e) {}
+        }
+
+        function bindText(el, key, onChange) {
+            function commit() { saveRaw(key, el.value.trim()); if (onChange) onChange(); }
+            el.addEventListener('change', commit);
+            el.addEventListener('blur', commit);
+        }
+        bindText(keyEl,  'os_api_key',  dropToken);
+        bindText(userEl, 'os_username', dropToken);
+        bindText(passEl, 'os_password', dropToken);
+        langEl.addEventListener('change', function () {
+            saveRaw('os_language', langEl.value);
+            setStatus('os-status', 'Subtitle language set to ' +
+                langEl.options[langEl.selectedIndex].textContent + '.', 'ok', 4000);
+        });
+
+        if (testEl) {
+            testEl.addEventListener('click', function () {
+                /* Commit any in-progress edits first — the user may press Test
+                   straight from the key field without it having blurred. */
+                saveRaw('os_api_key',  keyEl.value.trim());
+                saveRaw('os_username', userEl.value.trim());
+                saveRaw('os_password', passEl.value.trim());
+                dropToken();
+
+                if (!keyEl.value.trim()) {
+                    setStatus('os-status', 'Enter an API key first.', 'err');
+                    return;
+                }
+                if (typeof OpenSubtitles === 'undefined') {
+                    setStatus('os-status', 'OpenSubtitles module failed to load.', 'err');
+                    return;
+                }
+                setStatus('os-status', 'Contacting OpenSubtitles…', '');
+                OpenSubtitles.search({ title: 'Inception', year: 2010 })
+                    .then(function (results) {
+                        /* The login isn't exercised here — it's only used at
+                           download time — so don't claim to be signed in. */
+                        var who = loadRaw('os_username', '')
+                            ? ' Account "' + loadRaw('os_username', '') + '" will be used for downloads.' : '';
+                        var found = results.length
+                            ? ''
+                            : ' (The test search found nothing, but the key itself is valid.)';
+                        setStatus('os-status', 'Connected — API key works.' + found + who, 'ok');
+                    })
+                    .catch(function (err) {
+                        setStatus('os-status', (err && err.message) ? err.message : 'Connection failed.', 'err');
+                    });
+            });
+        }
+    }());
+
     /* ── EPG panel ─────────────────────────────────────────────────────────── */
     (function populateEPG() {
         document.getElementById('cfg-epg-url').value   = load('iptv_custom_epg_url',   '');
@@ -471,9 +738,10 @@
             if (c && c.data) return c.data;
             return Array.isArray(c) ? c : [];
         }
-        var resolvedUrl = load('iptv_active_resolved_url', '') || '';
-        var movieCats   = resolvedUrl ? cachedCats('vod_cats_movie_'  + resolvedUrl) : [];
-        var seriesCats  = resolvedUrl ? cachedCats('vod_cats_series_' + resolvedUrl) : [];
+        /* Scoped by account, not by server URL — see core/config.js. */
+        var vodScope    = Config.scope();
+        var movieCats   = cachedCats('vod_cats_movie_'  + vodScope);
+        var seriesCats  = cachedCats('vod_cats_series_' + vodScope);
 
         var hasAny = movieCats.length || seriesCats.length;
         empty.style.display = hasAny ? 'none' : '';
@@ -502,6 +770,207 @@
         });
         return row;
     }
+
+    /* ── Diagnostics panel ─────────────────────────────────────────────────────
+       A retail TV has no developer console, so anything we'd otherwise ask the
+       user to evaluate by hand has to be visible in the app itself. Everything
+       here is read-only and gathered live on the device. */
+    /* A diagnostic whose value is a paragraph rather than a number. diagRow's
+       value column is right-aligned and capped at 55% — correct for "3 streams",
+       unreadable for a JSON reply — so this one stacks and takes the full row. */
+    function diagBlock(label, text, note) {
+        var row = document.createElement('div');
+        row.className = 'cache-row diag-block';
+        var info = document.createElement('div');
+        info.className = 'cache-info';
+        var l = document.createElement('span');
+        l.className = 'cache-label';
+        l.textContent = label;
+        info.appendChild(l);
+        if (note) {
+            var d = document.createElement('span');
+            d.className = 'cache-desc';
+            d.textContent = note;
+            info.appendChild(d);
+        }
+        var body = document.createElement('div');
+        body.className = 'diag-raw';
+        body.textContent = text;
+        row.appendChild(info);
+        row.appendChild(body);
+        return row;
+    }
+
+    function diagRow(label, value, note) {
+        var row = document.createElement('div');
+        row.className = 'cache-row';
+        var info = document.createElement('div');
+        info.className = 'cache-info';
+        var l = document.createElement('span');
+        l.className = 'cache-label';
+        l.textContent = label;
+        var d = document.createElement('span');
+        d.className = 'cache-desc';
+        d.textContent = note || '';
+        info.appendChild(l);
+        if (note) info.appendChild(d);
+        var v = document.createElement('span');
+        v.className = 'diag-value';
+        v.textContent = value;
+        row.appendChild(info);
+        row.appendChild(v);
+        return row;
+    }
+
+    function deviceInfo() {
+        try {
+            if (typeof webOSSystem !== 'undefined' && webOSSystem.deviceInfo) {
+                return JSON.parse(webOSSystem.deviceInfo) || {};
+            }
+        } catch (e) {}
+        return {};
+    }
+
+    function storageBytes() {
+        if (typeof Store !== 'undefined') return Store.bytesUsed();
+        var total = 0;
+        try {
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                total += k.length + (localStorage.getItem(k) || '').length;
+            }
+        } catch (e) {}
+        return total;
+    }
+
+    function renderDiagnostics() {
+        var list = document.getElementById('diag-list');
+        if (!list) return;
+        list.innerHTML = '';
+
+        var ua  = navigator.userAgent || '';
+        var dev = deviceInfo();
+        var P   = (typeof Platform !== 'undefined') ? Platform : null;
+
+        list.appendChild(diagRow('App version', _localVer ? 'v' + _localVer : '—'));
+        list.appendChild(diagRow('Platform',
+            P ? P.describe() : 'unknown',
+            (P && P.isWebOS) ? 'Running on webOS' : 'Not a webOS browser'));
+        if (dev.modelName || dev.firmwareVersion) {
+            list.appendChild(diagRow('Device',
+                (dev.modelName || '?') + (dev.firmwareVersion ? '  ·  ' + dev.firmwareVersion : '')));
+        }
+        list.appendChild(diagRow('Screen',
+            window.innerWidth + '×' + window.innerHeight,
+            'Interface size ' + Math.round((typeof UIScale !== 'undefined' ? UIScale.get() : 1) * 100) + '%'));
+
+        /* ── Video pipeline ───────────────────────────────────────────────────
+           The single most useful thing on this screen. A black Live TV preview
+           with working audio means the decoder is running but its hardware
+           layer isn't being shown — which these two rows identify directly. */
+        if (P) {
+            list.appendChild(diagRow('Video pipeline',
+                P.videoPlaneOnly ? 'Hardware overlay plane' : 'Composited',
+                P.videoPlaneOnly
+                    ? 'Video cannot be rounded or clipped on this TV'
+                    : 'Video composites like any other element'));
+            list.appendChild(diagRow('Live TV preview',
+                P.pipCompatActive ? 'Compatibility (square)' : 'Standard (rounded)',
+                P.pipMode === 'auto' ? 'Chosen automatically — override in Player'
+                                     : 'Forced to "' + P.pipMode + '" in Player'));
+            list.appendChild(diagRow('Simultaneous streams', String(P.maxDecoders),
+                'Multiview grid size this TV can decode at once'));
+        }
+
+        /* Remote buttons that reached Live TV and did nothing. Empty is the
+           normal, healthy state; a code listed here is a button the app isn't
+           wired to, which is what a "this button does nothing" report needs. */
+        var unhandled = load('iptv_unhandled_keys', null);
+        if (unhandled && unhandled.length) {
+            list.appendChild(diagRow('Unrecognised remote keys', unhandled.join(', '),
+                'Key codes seen on Live TV that nothing responds to'));
+        }
+
+        /* Whether the track APIs exist at all on this build. Existence is not
+           the same as working — a track list that stays empty during playback
+           means the platform isn't exposing them for that container. */
+        var probe = document.createElement('video');
+        list.appendChild(diagRow('Audio track API',
+            (typeof probe.audioTracks !== 'undefined') ? 'Available' : 'Not available',
+            'Needed to switch audio language'));
+        list.appendChild(diagRow('Text track API',
+            (typeof probe.textTracks !== 'undefined') ? 'Available' : 'Not available',
+            'Needed for embedded subtitles'));
+
+        /* ── Last subtitle attempt ────────────────────────────────────────────
+           Written by the VOD player every time it resolves subtitles for a
+           title. This is what turns "there are no subtitles" into an answerable
+           question: it says what the panel returned, what was downloadable, and
+           what the decoder ended up exposing. */
+        var sd = load('iptv_subs_diag', null);
+        if (sd) {
+            list.appendChild(diagRow('Subtitles · title', sd.title || '—',
+                sd.ts ? new Date(sd.ts).toLocaleString() : ''));
+            list.appendChild(diagRow('Subtitles · panel reported',
+                String(sd.reported || 0) + ' stream' + (sd.reported === 1 ? '' : 's'),
+                sd.languages ? 'Languages: ' + sd.languages : 'get_vod_info / get_series_info'));
+            list.appendChild(diagRow('Subtitles · downloadable files',
+                String(sd.files || 0),
+                sd.embedded ? sd.embedded + ' embedded in the video, no file to fetch' : ''));
+            list.appendChild(diagRow('Subtitles · loaded into player',
+                String(sd.loaded || 0),
+                sd.failed ? sd.failed + ' failed to download' : ''));
+
+            /* What the panel actually sent. Only written when the player had to
+               ask for itself — i.e. exactly when subtitles came up empty and
+               the reason matters. A key name nobody expected is the likeliest
+               answer, so the reply is shown rather than summarised. */
+            if (sd.panelShape) {
+                list.appendChild(diagBlock('Subtitles · reply shape', sd.panelShape,
+                    'Which subtitle-bearing keys the panel returned, if any'));
+            }
+            if (sd.panelRaw) {
+                list.appendChild(diagBlock('Subtitles · raw reply', sd.panelRaw,
+                    (sd.source || 'panel reply') + ' — long text elided'));
+            }
+        }
+
+        /* Per-page load times, recorded by assets/boot.js on every page. This is
+           the number that decides whether a single-page rewrite is worthwhile. */
+        var timings = load(UIScale && UIScale.TIMING_KEY ? UIScale.TIMING_KEY : 'iptv_page_timings', null);
+        if (!timings) { try { timings = JSON.parse(localStorage.getItem('iptv_page_timings') || 'null'); } catch (e) {} }
+        if (timings) {
+            var names = Object.keys(timings), slowest = 0;
+            names.forEach(function (n) {
+                var t = timings[n];
+                if (t && t.ready > slowest) slowest = t.ready;
+                list.appendChild(diagRow('Load · ' + n, (t && t.ready ? t.ready + ' ms' : '—'),
+                    t && t.full ? 'fully loaded ' + t.full + ' ms' : ''));
+            });
+            list.appendChild(diagRow('Navigation cost',
+                slowest ? slowest + ' ms' : '—',
+                slowest > 800 ? 'Slow — a single-page rewrite would help'
+                              : slowest ? 'Acceptable — a rewrite would not pay off' : ''));
+        } else {
+            list.appendChild(diagRow('Page load times', 'none recorded yet',
+                'Visit Live TV and VOD, then come back'));
+        }
+
+        var chCache = load('iptv_ch_v2', null);
+        list.appendChild(diagRow('Cached channels',
+            (chCache && chCache.data && chCache.data.length) ? String(chCache.data.length) : '0'));
+        list.appendChild(diagRow('Storage used', Math.round(storageBytes() / 1024) + ' KB'));
+
+        rebuildFocusables();
+    }
+
+    (function wireDiagnostics() {
+        var btn = document.getElementById('diag-refresh-btn');
+        if (btn) btn.addEventListener('click', function () {
+            renderDiagnostics();
+            setStatus('diag-status', 'Refreshed.', 'ok', 2500);
+        });
+    }());
 
     /* ── Remote QR setup — always-visible right panel ──────────────────────── */
     var REMOTE_BASE_URL   = 'https://lgiptv-remote.vercel.app';
@@ -532,9 +1001,9 @@
             ? cachedCats.data.map(function (c) { return { id: String(c.category_id), name: c.category_name || '' }; })
             : [];
 
-        var resolvedUrl = load('iptv_active_resolved_url', '') || '';
-        var rawM = resolvedUrl ? load('vod_cats_movie_'  + resolvedUrl, null) : null;
-        var rawS = resolvedUrl ? load('vod_cats_series_' + resolvedUrl, null) : null;
+        var vodScope = Config.scope();
+        var rawM = load('vod_cats_movie_'  + vodScope, null);
+        var rawS = load('vod_cats_series_' + vodScope, null);
         var mArr = Array.isArray(rawM) ? rawM : (rawM && rawM.data ? rawM.data : []);
         var sArr = Array.isArray(rawS) ? rawS : (rawS && rawS.data ? rawS.data : []);
         var vodCatsM = mArr.map(function (c) { return { id: String(c.category_id), name: c.category_name || '' }; });
@@ -888,6 +1357,29 @@
 
     function openKeyboard(el) { el.focus(); }
 
+    /* ── Dropdowns on a D-pad ──────────────────────────────────────────────────
+       A <select> is unusable with a remote here: arrow keys never reach it (the
+       global handler preventDefaults them and routes to handleNavKey, which only
+       exempts INPUT/TEXTAREA), and a programmatic .click() can't open the native
+       popup anyway. Rather than fight that, the value is changed IN PLACE:
+       LEFT/RIGHT step through the options and ENTER cycles. The popup is never
+       opened, so this behaves identically on every webOS version.
+       `wrap` is true for ENTER — with no other affordance it has to be able to
+       get back to the first option — and false for arrows, where clamping at the
+       ends is what you'd expect. */
+    function stepSelect(el, dir, wrap) {
+        var n = el.options.length;
+        if (!n) return;
+        var i = el.selectedIndex + dir;
+        if (wrap) i = (i + n) % n;
+        else i = Math.max(0, Math.min(n - 1, i));
+        if (i === el.selectedIndex) return;
+        el.selectedIndex = i;
+        el.dispatchEvent(new Event('change'));
+    }
+
+    function isSelect(el) { return !!(el && el.tagName === 'SELECT'); }
+
     function closeKeyboard() {
         var prev = document.activeElement;
         if (prev) prev.blur();
@@ -959,19 +1451,27 @@
                 }
                 return;
             }
-            if (kc === KEY.LEFT) {
-                if (_col === 'editor') {
-                    if (_editorColIdx > 0) { _editorColIdx--; applyProfileFocus(); }
-                    else { _col = 'sidebar'; applyProfileFocus(); }
-                }
-                return;
-            }
-            if (kc === KEY.RIGHT) {
-                if (_col === 'sidebar') {
-                    if (getEditorRows().length > 0) { _col = 'editor'; _editorColIdx = 0; applyProfileFocus(); }
+            if (kc === KEY.LEFT || kc === KEY.RIGHT) {
+                var dir = kc === KEY.RIGHT ? 1 : -1;
+                /* A focused dropdown consumes LEFT/RIGHT to change its value.
+                   UP/DOWN is still the way off the row, so nothing is trapped. */
+                var focusedEl = (_col === 'editor')
+                    ? ((getEditorRows()[_editorRowIdx] || [])[_editorColIdx])
+                    : null;
+                if (isSelect(focusedEl)) { stepSelect(focusedEl, dir, false); return; }
+
+                if (kc === KEY.LEFT) {
+                    if (_col === 'editor') {
+                        if (_editorColIdx > 0) { _editorColIdx--; applyProfileFocus(); }
+                        else { _col = 'sidebar'; applyProfileFocus(); }
+                    }
                 } else {
-                    var curRow = getEditorRows()[_editorRowIdx] || [];
-                    if (_editorColIdx < curRow.length - 1) { _editorColIdx++; applyProfileFocus(); }
+                    if (_col === 'sidebar') {
+                        if (getEditorRows().length > 0) { _col = 'editor'; _editorColIdx = 0; applyProfileFocus(); }
+                    } else {
+                        var curRow = getEditorRows()[_editorRowIdx] || [];
+                        if (_editorColIdx < curRow.length - 1) { _editorColIdx++; applyProfileFocus(); }
+                    }
                 }
                 return;
             }
@@ -983,8 +1483,9 @@
                     el = row[_editorColIdx];
                 }
                 if (!el) return;
-                if (el.tagName === 'INPUT') { openKeyboard(el); }
-                else { el.click(); }
+                if (el.tagName === 'INPUT')  { openKeyboard(el); }
+                else if (isSelect(el))       { stepSelect(el, 1, true); }
+                else                         { el.click(); }
                 return;
             }
             return;
@@ -1009,6 +1510,8 @@
         }
         if (kc === KEY.LEFT || kc === KEY.RIGHT) {
             var dir = kc === KEY.RIGHT ? 1 : -1;
+            /* Dropdowns change value in place — see stepSelect(). */
+            if (isSelect(el)) { stepSelect(el, dir, false); return; }
             if (tabList.indexOf(el) !== -1) {
                 var ci = tabList.indexOf(el), next = ci + dir;
                 if (next >= 0 && next < tabList.length) {
@@ -1033,8 +1536,9 @@
         }
         if (kc === KEY.ENTER) {
             if (!el) return;
-            if (el.tagName === 'INPUT') { openKeyboard(el); }
-            else { el.click(); }
+            if (el.tagName === 'INPUT')  { openKeyboard(el); }
+            else if (isSelect(el))       { stepSelect(el, 1, true); }
+            else                         { el.click(); }
             return;
         }
     }

@@ -8,6 +8,10 @@
     <link rel="stylesheet" href="../assets/base.css" />
     <link rel="stylesheet" href="../assets/livetv.css" />
     <link rel="stylesheet" href="../assets/player.css" />
+    <link rel="stylesheet" href="../assets/multiview.css" />
+    <!-- Blocking on purpose: detects the video pipeline and sets the UI scale
+         before first paint. Must stay in <head> and must stay synchronous. -->
+    <script src="../assets/boot.js"></script>
 </head>
 <body>
     <div id="app">
@@ -65,7 +69,10 @@
                     <div id="player-msg">Select a channel</div>
                     <div id="pip-bar">
                         <span id="pip-channel-name"></span>
-                        <button id="pip-fullscreen-btn" title="Fullscreen">⛶</button>
+                        <div id="pip-actions">
+                            <button id="pip-multiview-btn" title="Multiview (BLUE)">⊞</button>
+                            <button id="pip-fullscreen-btn" title="Fullscreen">⛶</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -88,12 +95,34 @@
         </main>
     </div>
 
+    <!-- `defer` keeps the order while letting the parser finish first. The
+         order itself is a dependency chain:
+           polyfills → core → optional local config → data clients →
+           player engine → multiview → d-pad → page script. -->
     <script defer src="../dist/js/polyfills.js"></script>
-    <script defer src="../dist/js/iptv-core.js"></script>
+    <script defer src="../dist/js/core/store.js"></script>
+    <script defer src="../dist/js/core/net.js"></script>
+    <script defer src="../dist/js/core/dom.js"></script>
+    <script defer src="../dist/js/core/config.js"></script>
+    <!-- Optional, gitignored: hardcodes IPTV_CONFIG for development. -->
     <script defer src="../config/config.js"></script>
-    <script defer src="../dist/api/xtream.js"></script>
-    <script defer src="../dist/api/m3u.js"></script>
-    <script defer src="../dist/js/player.js"></script>
+    <script defer src="../dist/js/data/subtitles.js"></script>
+    <script defer src="../dist/js/data/xtream.js"></script>
+    <script defer src="../dist/js/data/m3u.js"></script>
+    <script defer src="../dist/js/data/favourites.js"></script>
+    <script defer src="../dist/js/player/codecs.js"></script>
+    <script defer src="../dist/js/player/preferences.js"></script>
+    <script defer src="../dist/js/player/engine.js"></script>
+    <!-- Live TV's own modules. state.js first: the others read the globals it
+         declares, and its initialisers run at load time. app.js last: it boots
+         the page as soon as it is parsed. -->
+    <script defer src="../dist/js/livetv/state.js"></script>
+    <script defer src="../dist/js/livetv/epg.js"></script>
+    <script defer src="../dist/js/livetv/channels.js"></script>
+    <script defer src="../dist/js/livetv/sidebar.js"></script>
+    <script defer src="../dist/js/livetv/pip.js"></script>
+    <script defer src="../dist/js/livetv/numpad.js"></script>
+    <script defer src="../dist/js/livetv/multiview.js"></script>
     <script defer src="../dist/js/dpad.js"></script>
     <script defer src="../dist/js/app.js"></script>
 </body>

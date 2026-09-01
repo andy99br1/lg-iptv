@@ -4,8 +4,8 @@
 # Note: only entries with NO counterpart under dist/ are listed, so there's zero
 # risk of accidentally excluding shipped code even if the matcher ignores the
 # leading-slash anchor. node_modules is the bulk of the old bloat. The tiny js/
-# and api/ source dirs are intentionally left in (a few KB, harmless) rather than
-# risk a pattern matching dist/js or dist/api.
+# source dir is intentionally left in (a few KB, harmless) rather than risk a
+# pattern matching dist/js.
 
 /node_modules/
 /.git/

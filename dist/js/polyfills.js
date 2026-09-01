@@ -1,5 +1,6 @@
 "use strict";
 
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 /* polyfills.js — runtime shims for older WebOS browsers.
  *
  * Babel transpiles ES6+ *syntax* (arrow fns, let/const, classes) but does NOT
@@ -174,6 +175,73 @@
     }
   }
 
+  /* ── scrollIntoView(options) (Chrome 61+) ─────────────────────────────────
+     Every D-pad screen in this app moves its focus ring with
+     `el.scrollIntoView({ block: 'nearest' })` — seventeen call sites across
+     the channel list, the VOD rails, catch-up, settings and the player menu.
+      Old Blink does not understand the dictionary. It does NOT throw, which is
+     what makes this worth polyfilling rather than try/catching: the argument
+     is coerced to a boolean, `{}` is truthy, and every one of those calls
+     silently becomes `scrollIntoView(true)` — "align to the TOP". So on the
+     TVs this app targets, each press of the D-pad yanked the focused row to
+     the top of its container instead of nudging it just into view, which
+     reads as the list jumping around under you.
+      Installed only where the dictionary is unsupported, and it defers to the
+     native method for the boolean/no-arg forms, so modern engines are
+     untouched. `scrollBehavior` in the style object is the detection: CSSOM
+     View smooth scrolling shipped alongside the dictionary form. */
+  if (typeof Element !== 'undefined' && Element.prototype && Element.prototype.scrollIntoView && document.documentElement && !('scrollBehavior' in document.documentElement.style)) {
+    var _nativeSIV = Element.prototype.scrollIntoView;
+
+    /* The nearest ancestor that actually scrolls on the given axis. Falls
+       back to null, where the native call is the better answer than
+       guessing at the viewport. */
+    var _scrollParent = function _scrollParent(el, axis) {
+      var node = el.parentNode;
+      while (node && node.nodeType === 1) {
+        var s;
+        try {
+          s = window.getComputedStyle(node);
+        } catch (e) {
+          return null;
+        }
+        var ov = axis === 'x' ? s.overflowX : s.overflowY;
+        var scrolls = axis === 'x' ? node.scrollWidth > node.clientWidth : node.scrollHeight > node.clientHeight;
+        if ((ov === 'auto' || ov === 'scroll' || ov === 'overlay') && scrolls) return node;
+        node = node.parentNode;
+      }
+      return null;
+    };
+    Element.prototype.scrollIntoView = function (arg) {
+      if (!arg || _typeof(arg) !== 'object') return _nativeSIV.call(this, arg);
+      var block = arg.block || 'start';
+      var inline = arg.inline || 'nearest';
+      var handled = false;
+      var vp = _scrollParent(this, 'y');
+      if (vp) {
+        var er = this.getBoundingClientRect(),
+          pr = vp.getBoundingClientRect();
+        var top = er.top - pr.top + vp.scrollTop,
+          bot = top + er.height;
+        if (block === 'start') vp.scrollTop = top;else if (block === 'end') vp.scrollTop = bot - vp.clientHeight;else if (block === 'center') vp.scrollTop = top - (vp.clientHeight - er.height) / 2;else if (top < vp.scrollTop) vp.scrollTop = top;else if (bot > vp.scrollTop + vp.clientHeight) vp.scrollTop = bot - vp.clientHeight;
+        handled = true;
+      }
+      var hp = _scrollParent(this, 'x');
+      if (hp) {
+        var er2 = this.getBoundingClientRect(),
+          pr2 = hp.getBoundingClientRect();
+        var left = er2.left - pr2.left + hp.scrollLeft,
+          right = left + er2.width;
+        if (inline === 'start') hp.scrollLeft = left;else if (inline === 'end') hp.scrollLeft = right - hp.clientWidth;else if (inline === 'center') hp.scrollLeft = left - (hp.clientWidth - er2.width) / 2;else if (left < hp.scrollLeft) hp.scrollLeft = left;else if (right > hp.scrollLeft + hp.clientWidth) hp.scrollLeft = right - hp.clientWidth;
+        handled = true;
+      }
+
+      /* Nothing scrollable around it — let the platform decide, using the
+         boolean that matches the requested block. */
+      if (!handled) _nativeSIV.call(this, block !== 'end' && block !== 'nearest');
+    };
+  }
+
   /* ── Number.isNaN / isFinite (Chrome 25/19 — safe guard) ─────────────── */
   if (!Number.isNaN) Number.isNaN = function (v) {
     return v !== v;
@@ -216,6 +284,21 @@
       return new Promise(function (resolve, reject) {
         var xhr = new XMLHttpRequest();
         xhr.open(opts.method || 'GET', url, true);
+        /* Callers that need the raw BYTES rather than a decoded string
+           ask for them up front, because XHR cannot supply both: setting
+           responseType makes responseText unavailable. Subtitle
+           downloads are the case that needs this — a .srt from a Chinese
+           or Western European source is frequently not UTF-8, and once
+           the browser has decoded it with the wrong charset the original
+           bytes are gone and the mojibake is unrecoverable. */
+        var wantBuffer = opts.responseType === 'arraybuffer';
+        if (wantBuffer) {
+          try {
+            xhr.responseType = 'arraybuffer';
+          } catch (e) {
+            wantBuffer = false;
+          }
+        }
         if (opts.headers) {
           for (var h in opts.headers) {
             if (Object.prototype.hasOwnProperty.call(opts.headers, h)) {
@@ -230,13 +313,62 @@
           resolve({
             ok: xhr.status >= 200 && xhr.status < 300,
             status: xhr.status,
+            /* Enough of the Headers interface for the one thing the
+               app does with it: refusing to read a response body
+               that turns out to be a 2 GB movie rather than the
+               subtitle file we asked for. Header names are
+               case-insensitive per spec, and getResponseHeader
+               already handles that. */
+            headers: {
+              get: function get(name) {
+                try {
+                  return xhr.getResponseHeader(name);
+                } catch (e) {
+                  return null;
+                }
+              }
+            },
+            /* arrayBuffer() is part of the Response interface the app
+               actually uses (subtitle downloads decode bytes
+               themselves), and omitting it meant a caller that
+               reached this shim died on "res.arrayBuffer is not a
+               function" rather than degrading. Present in both
+               modes: without responseType support the body is
+               already a string, so it is widened back to bytes —
+               lossy for non-ASCII, but a working ASCII path beats a
+               TypeError, and callers that care ask for the buffer. */
+            arrayBuffer: function arrayBuffer() {
+              if (wantBuffer && body && body.byteLength !== undefined) {
+                return Promise.resolve(body);
+              }
+              var s = String(body === null || body === undefined ? '' : body);
+              var buf = new ArrayBuffer(s.length);
+              var view = new Uint8Array(buf);
+              for (var i = 0; i < s.length; i++) view[i] = s.charCodeAt(i) & 0xff;
+              return Promise.resolve(buf);
+            },
             text: function text() {
-              return Promise.resolve(body);
+              return Promise.resolve(bodyText());
             },
             json: function json() {
-              return Promise.resolve(JSON.parse(body));
+              return Promise.resolve(JSON.parse(bodyText()));
             }
           });
+
+          /* In arraybuffer mode `body` is an ArrayBuffer, so text()
+             and json() have to decode it rather than hand back
+             "[object ArrayBuffer]". */
+          function bodyText() {
+            if (!wantBuffer || !body || body.byteLength === undefined) return body;
+            var bytes = new Uint8Array(body),
+              out = '';
+            for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
+            try {
+              return decodeURIComponent(escape(out));
+            } catch (e) {
+              return out;
+            }
+          }
         };
         xhr.onerror = function () {
           reject(new TypeError('Network request failed'));

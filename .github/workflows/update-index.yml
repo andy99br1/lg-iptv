@@ -45,7 +45,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Run Babel to transpile js/ and api/ into dist/
+      # Run Babel to transpile js/ (including js/core, js/data, js/livetv)
+      # into dist/js, preserving the directory layout the pages reference.
       - name: Build with Babel
         run: npm run build
 
@@ -59,7 +60,7 @@ jobs:
           sed -i "s|rimraf = require('rimraf'),|rimraf = (p, cb) => require('rimraf').rimraf(p).then(() => cb(), cb),|" "$PACKAGE_JS"
           echo "Patched: $(grep 'rimraf =' $PACKAGE_JS | head -1)"
 
-      # .packageignore excludes js/, api/, node_modules/, .babelrc etc.
+      # .packageignore excludes node_modules/, .babelrc etc.
       - name: Package IPK
         run: |
           ares-package --no-minify . --outdir ./output

@@ -3,9 +3,9 @@
    backdrop-filter with solid fallbacks. Sized for 1080p TV viewing distance. */
 
 :root {
-    --vod-radius: 20px;
-    --vod-card-w: 210px;
-    --vod-card-h: 315px;       /* 2:3 poster */
+    --vod-radius: 1.25rem;
+    --vod-card-w: 13.125rem;
+    --vod-card-h: 19.6875rem;       /* 2:3 poster */
     --vod-accent: var(--accent, #3b82f6);
     --vod-surface: rgba(255,255,255,0.06);
     --vod-surface-2: rgba(255,255,255,0.10);
@@ -33,7 +33,7 @@ body {
 
 /* Shared icon button (detail / search close) */
 .vod-icon-btn {
-    width: 58px; height: 58px;
+    width: 3.625rem; height: 3.625rem;
     display: -webkit-box; display: flex;
     -webkit-box-pack: center; justify-content: center;
     -webkit-box-align: center; align-items: center;
@@ -45,7 +45,7 @@ body {
     -webkit-transition: all 0.18s ease;
     transition: all 0.18s ease;
 }
-.vod-icon-btn svg { width: 24px; height: 24px; }
+.vod-icon-btn svg { width: 1.5rem; height: 1.5rem; }
 .vod-icon-btn:hover { background: var(--vod-surface-2); }
 
 /* Focus ring — shared */
@@ -59,14 +59,14 @@ body {
 #vod-sidebar {
     position: fixed;
     top: 0; left: 0; bottom: 0;
-    width: 96px;
+    width: 6rem;
     z-index: 30;
     overflow: hidden;
     background: linear-gradient(90deg, rgba(8,9,13,0.98) 0%, rgba(8,9,13,0.92) 55%, rgba(8,9,13,0) 100%);
     -webkit-transition: width 0.22s cubic-bezier(0.22,1,0.36,1);
     transition: width 0.22s cubic-bezier(0.22,1,0.36,1);
 }
-#vod-sidebar.expanded { width: 320px; }
+#vod-sidebar.expanded { width: 20rem; }
 
 #vod-sidebar-inner {
     display: -webkit-box; display: flex;
@@ -74,7 +74,7 @@ body {
     flex-direction: column;
     -webkit-box-pack: start; justify-content: flex-start;
     height: 100%;
-    padding: 34px 0 34px 6px;
+    padding: 2.125rem 0 2.125rem 0.375rem;
     overflow-y: auto;
     scrollbar-width: none;
 }
@@ -83,12 +83,12 @@ body {
 .vod-nav-item {
     display: -webkit-box; display: flex;
     -webkit-box-align: center; align-items: center;
-    width: 304px;
-    height: 74px;
-    margin: 4px 0;
-    padding: 0 22px;
+    width: 19rem;
+    height: 4.625rem;
+    margin: 0.25rem 0;
+    padding: 0 1.375rem;
     border: none;
-    border-radius: 16px;
+    border-radius: 1rem;
     background: transparent;
     color: var(--vod-dim);
     font-family: inherit;
@@ -98,14 +98,14 @@ body {
 }
 .vod-nav-emoji {
     -webkit-box-flex: 0; flex: 0 0 auto;
-    width: 42px;
+    width: 2.625rem;
     text-align: center;
-    font-size: 30px;
+    font-size: 1.875rem;
     line-height: 1;
 }
 .vod-nav-label {
-    margin-left: 20px;
-    font-size: 21px;
+    margin-left: 1.25rem;
+    font-size: 1.3125rem;
     font-weight: 600;
     white-space: nowrap;
     opacity: 0;
@@ -129,13 +129,13 @@ body {
 #vod-nav-cats { display: none; }
 #vod-sidebar.expanded #vod-nav-cats {
     display: block;
-    margin: 12px 0 0 0;
-    padding-top: 12px;
+    margin: 0.75rem 0 0 0;
+    padding-top: 0.75rem;
     border-top: 1px solid rgba(255,255,255,0.08);
 }
 .vod-cat-header {
-    padding: 8px 22px;
-    font-size: 13px;
+    padding: 0.5rem 1.375rem;
+    font-size: 0.8125rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -144,23 +144,23 @@ body {
 }
 .vod-cat-item {
     display: block;
-    width: 304px;
-    height: 54px;
-    margin: 1px 0;
-    padding: 0 22px;
+    width: 19rem;
+    height: 3.375rem;
+    margin: 0.0625rem 0;
+    padding: 0 1.375rem;
     border: none;
-    border-radius: 14px;
+    border-radius: 0.875rem;
     background: transparent;
     color: var(--vod-dim);
     font-family: inherit;
-    font-size: 18px;
+    font-size: 1.125rem;
     font-weight: 500;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     cursor: pointer;
-    line-height: 54px;
+    line-height: 3.375rem;
     -webkit-transition: background 0.15s ease, color 0.15s ease;
     transition: background 0.15s ease, color 0.15s ease;
 }
@@ -170,9 +170,43 @@ body {
     box-shadow: none;
 }
 
+/* ── Category row: name + "pin to top" star ───────────────────────────────────
+   The star is always drawn rather than revealed on hover — with a remote there
+   is no hover, so a hidden control is an invisible one. The row lets the name
+   shrink so a long category never pushes the star out of the panel. */
+.vod-cat-row {
+    display: flex;
+    align-items: center;
+    width: 19rem;
+}
+.vod-cat-row .vod-cat-item {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+}
+.vod-cat-star {
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 3.375rem;
+    border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.22);
+    font-size: 1.125rem;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 0.875rem;
+    -webkit-transition: color 0.15s ease, background 0.15s ease;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+.vod-cat-star.active { color: var(--gold, #f5c518); }
+.vod-cat-star.tv-focus-visible {
+    background: var(--vod-surface-2);
+    color: var(--gold, #f5c518);
+}
+
 /* ── Content ─────────────────────────────────────────────────────────── */
 #vod-content {
-    margin-left: 96px;
+    margin-left: 6rem;
     height: 100vh;
     display: -webkit-box; display: flex;
     -webkit-box-orient: vertical; -webkit-box-direction: normal;
@@ -185,15 +219,15 @@ body {
     flex: 1 1 auto;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 38px 0 72px;
+    padding: 2.375rem 0 4.5rem;
     scrollbar-width: none;
 }
 #vod-rails::-webkit-scrollbar { display: none; }
 
-.vod-rail { margin-bottom: 34px; }
+.vod-rail { margin-bottom: 2.125rem; }
 .vod-rail-title {
-    margin: 0 0 16px 40px;
-    font-size: 27px;
+    margin: 0 0 1rem 2.5rem;
+    font-size: 1.6875rem;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--vod-text);
@@ -203,10 +237,10 @@ body {
     display: flex;
     overflow-x: auto;
     overflow-y: hidden;
-    padding: 10px 40px 18px;     /* room for focus scale + shadow */
+    padding: 0.625rem 2.5rem 1.125rem;     /* room for focus scale + shadow */
     /* Reserve the row height so a recycled (emptied) rail keeps its size and the
        page doesn't jump when cards are removed/re-added on scroll. */
-    min-height: calc(var(--vod-card-h) + 60px);
+    min-height: calc(var(--vod-card-h) + 3.75rem);
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
 }
@@ -217,7 +251,7 @@ body {
     -webkit-box-flex: 0;
     flex: 0 0 auto;
     width: var(--vod-card-w);
-    margin-right: 22px;
+    margin-right: 1.375rem;
     cursor: pointer;
     -webkit-transition: -webkit-transform 0.2s cubic-bezier(0.22,1,0.36,1);
     transition: transform 0.2s cubic-bezier(0.22,1,0.36,1);
@@ -255,7 +289,7 @@ body {
     display: -webkit-box; display: flex;
     -webkit-box-pack: center; justify-content: center;
     -webkit-box-align: center; align-items: center;
-    font-size: 74px; font-weight: 700;
+    font-size: 4.625rem; font-weight: 700;
     color: rgba(255,255,255,0.18);
     background: linear-gradient(135deg, #1c1f29, #11131a);
 }
@@ -263,7 +297,7 @@ body {
 .vod-card-progress {
     position: absolute;
     left: 0; right: 0; bottom: 0;
-    height: 5px;
+    height: 0.3125rem;
     background: rgba(0,0,0,0.5);
 }
 .vod-card-progress-fill {
@@ -272,8 +306,8 @@ body {
 }
 
 .vod-card-label {
-    margin-top: 12px;
-    font-size: 17px;
+    margin-top: 0.75rem;
+    font-size: 1.0625rem;
     font-weight: 500;
     line-height: 1.3;
     color: var(--vod-dim);
@@ -288,7 +322,7 @@ body {
     width: var(--vod-card-w);
     height: var(--vod-card-h);
     border-radius: var(--vod-radius);
-    margin-right: 22px;
+    margin-right: 1.375rem;
     background: linear-gradient(100deg, #15171f 30%, #1f222d 50%, #15171f 70%);
     background-size: 200% 100%;
     -webkit-animation: vodShimmer 1.3s linear infinite;
@@ -309,14 +343,14 @@ body {
     -webkit-box-align: center; align-items: center;
     -webkit-box-pack: center; justify-content: center;
     color: var(--vod-dim);
-    font-size: 19px;
+    font-size: 1.1875rem;
 }
 .vod-spinner {
-    width: 50px; height: 50px;
+    width: 3.125rem; height: 3.125rem;
     border: 4px solid rgba(255,255,255,0.14);
     border-top-color: var(--vod-accent);
     border-radius: 50%;
-    margin-bottom: 18px;
+    margin-bottom: 1.125rem;
     -webkit-animation: vodSpin 0.8s linear infinite;
     animation: vodSpin 0.8s linear infinite;
 }
@@ -331,27 +365,27 @@ body {
     background: rgba(8,9,13,0.92);
     -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
-    padding: 42px 56px;
+    padding: 2.625rem 3.5rem;
     overflow-y: auto;
 }
 #vod-search-bar {
     display: -webkit-box; display: flex;
     -webkit-box-align: center; align-items: center;
-    max-width: 900px;
-    margin: 0 auto 8px;
-    padding: 8px 8px 8px 24px;
-    border-radius: 999px;
+    max-width: 56.25rem;
+    margin: 0 auto 0.5rem;
+    padding: 0.5rem 0.5rem 0.5rem 1.5rem;
+    border-radius: 62.4375rem;
     background: var(--vod-surface);
     border: 1px solid rgba(255,255,255,0.12);
 }
 .vod-search-icon { color: var(--vod-dim); -webkit-box-flex: 0; flex: 0 0 auto; }
 #vod-search-input {
     -webkit-box-flex: 1; flex: 1 1 auto;
-    margin: 0 16px;
+    margin: 0 1rem;
     background: transparent;
     border: none; outline: none;
     color: var(--vod-text);
-    font-size: 24px;
+    font-size: 1.5rem;
     font-family: inherit;
 }
 #vod-search-input::placeholder { color: var(--vod-dim); }
@@ -361,8 +395,8 @@ body {
 .vod-search-hint {
     text-align: center;
     color: var(--vod-dim);
-    font-size: 18px;
-    margin: 24px 0;
+    font-size: 1.125rem;
+    margin: 1.5rem 0;
 }
 
 /* ── Grid (search results) ───────────────────────────────────────────── */
@@ -372,10 +406,10 @@ body {
     -webkit-box-pack: center;
     justify-content: center;
     flex-wrap: wrap;
-    max-width: 1560px;
+    max-width: 97.5rem;
     margin: 0 auto;
 }
-.vod-grid .vod-card { margin: 0 14px 34px; }
+.vod-grid .vod-card { margin: 0 0.875rem 2.125rem; }
 
 /* ── Detail overlay ──────────────────────────────────────────────────── */
 #vod-detail {
@@ -401,71 +435,71 @@ body {
 }
 #vod-detail-close {
     position: absolute;
-    top: 30px; right: 42px;
+    top: 1.875rem; right: 2.625rem;
     z-index: 3;
 }
 #vod-detail-inner {
     position: relative;
     z-index: 2;
-    max-width: 1280px;
+    max-width: 80rem;
     margin: 0 auto;
-    padding: 96px 64px 72px;
+    padding: 6rem 4rem 4.5rem;
     display: -webkit-box;
     display: flex;
 }
 #vod-detail-poster-wrap {
     -webkit-box-flex: 0; flex: 0 0 auto;
-    width: 310px;
-    margin-right: 48px;
+    width: 19.375rem;
+    margin-right: 3rem;
 }
 #vod-detail-poster {
     width: 100%;
-    border-radius: 24px;
+    border-radius: 1.5rem;
     box-shadow: 0 18px 50px rgba(0,0,0,0.6);
     background: #15171f;
     display: block;
 }
 #vod-detail-main { -webkit-box-flex: 1; flex: 1 1 auto; min-width: 0; }
 #vod-detail-title {
-    margin: 8px 0 18px;
-    font-size: 50px;
+    margin: 0.5rem 0 1.125rem;
+    font-size: 3.125rem;
     font-weight: 800;
     letter-spacing: -0.02em;
     line-height: 1.05;
 }
-#vod-detail-meta { margin-bottom: 24px; }
+#vod-detail-meta { margin-bottom: 1.5rem; }
 .vod-meta-badge {
     display: inline-block;
-    margin: 0 10px 10px 0;
-    padding: 7px 16px;
-    border-radius: 999px;
+    margin: 0 0.625rem 0.625rem 0;
+    padding: 0.4375rem 1rem;
+    border-radius: 62.4375rem;
     background: var(--vod-surface);
     border: 1px solid rgba(255,255,255,0.08);
-    font-size: 16px; font-weight: 600;
+    font-size: 1rem; font-weight: 600;
     color: var(--vod-text);
 }
 .vod-meta-badge.gold { color: #ffd277; }
 #vod-detail-plot {
-    font-size: 20px;
+    font-size: 1.25rem;
     line-height: 1.6;
     color: rgba(240,241,245,0.86);
-    margin: 0 0 26px;
-    max-width: 760px;
+    margin: 0 0 1.625rem;
+    max-width: 47.5rem;
 }
-.vod-credit-row { font-size: 18px; margin-bottom: 8px; color: var(--vod-text); }
+.vod-credit-row { font-size: 1.125rem; margin-bottom: 0.5rem; color: var(--vod-text); }
 .vod-credit-label {
     display: inline-block;
-    width: 96px;
+    width: 6rem;
     color: var(--vod-dim);
     font-weight: 600;
 }
 
 #vod-detail-actions {
-    margin: 30px 0 6px;
+    margin: 1.875rem 0 0.375rem;
     display: -webkit-box; display: flex;
     -webkit-box-align: center; align-items: center;
 }
-#vod-detail-actions .vod-btn { margin-right: 14px; }
+#vod-detail-actions .vod-btn { margin-right: 0.875rem; }
 .vod-btn-secondary {
     background: var(--vod-surface-2);
     color: #fff;
@@ -475,30 +509,30 @@ body {
     display: -webkit-box; display: flex;
     -webkit-box-align: center; align-items: center;
     -webkit-box-pack: center; justify-content: center;
-    padding: 16px 38px;
-    border-radius: 16px;
+    padding: 1rem 2.375rem;
+    border-radius: 1rem;
     border: none;
-    font-size: 20px; font-weight: 700;
+    font-size: 1.25rem; font-weight: 700;
     font-family: inherit;
     cursor: pointer;
     -webkit-transition: -webkit-transform 0.15s ease;
     transition: transform 0.15s ease;
 }
-.vod-btn svg { margin-right: 11px; width: 22px; height: 22px; }
+.vod-btn svg { margin-right: 0.6875rem; width: 1.375rem; height: 1.375rem; }
 .vod-btn-primary { background: #fff; color: #111; }
 .vod-btn.tv-focus-visible { -webkit-transform: scale(1.04); transform: scale(1.04); }
 
 /* Seasons + episodes */
-#vod-seasons { margin-top: 38px; }
-#vod-season-tabs { margin-bottom: 20px; }
+#vod-seasons { margin-top: 2.375rem; }
+#vod-season-tabs { margin-bottom: 1.25rem; }
 .vod-season-tab {
-    margin: 0 10px 10px 0;
-    padding: 10px 22px;
-    border-radius: 999px;
+    margin: 0 0.625rem 0.625rem 0;
+    padding: 0.625rem 1.375rem;
+    border-radius: 62.4375rem;
     border: 1px solid rgba(255,255,255,0.10);
     background: var(--vod-surface);
     color: var(--vod-dim);
-    font-size: 18px; font-weight: 600;
+    font-size: 1.125rem; font-weight: 600;
     font-family: inherit;
     cursor: pointer;
     -webkit-transition: all 0.15s ease;
@@ -506,14 +540,14 @@ body {
 }
 .vod-season-tab.active { background: #fff; color: #111; }
 
-#vod-episode-list { max-width: 880px; }
+#vod-episode-list { max-width: 55rem; }
 .vod-ep-row {
     display: -webkit-box; display: flex;
     -webkit-box-align: center; align-items: center;
     width: 100%;
-    margin-bottom: 10px;
-    padding: 18px 22px;
-    border-radius: 16px;
+    margin-bottom: 0.625rem;
+    padding: 1.125rem 1.375rem;
+    border-radius: 1rem;
     border: 1px solid rgba(255,255,255,0.06);
     background: var(--vod-surface);
     color: var(--vod-text);
@@ -526,22 +560,95 @@ body {
 .vod-ep-row.tv-focus-visible { background: var(--vod-surface-2); }
 .vod-ep-num {
     -webkit-box-flex: 0; flex: 0 0 auto;
-    width: 44px;
-    font-size: 18px; font-weight: 700;
+    width: 2.75rem;
+    font-size: 1.125rem; font-weight: 700;
     color: var(--vod-dim);
 }
 .vod-ep-name {
     -webkit-box-flex: 1; flex: 1 1 auto;
-    font-size: 18px; font-weight: 500;
+    font-size: 1.125rem; font-weight: 500;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    margin-right: 16px;
+    margin-right: 1rem;
 }
-.vod-ep-play { -webkit-box-flex: 0; flex: 0 0 auto; color: var(--vod-accent); font-size: 16px; }
-.vod-ep-loading { color: var(--vod-dim); font-size: 18px; padding: 14px 4px; }
+.vod-ep-play { -webkit-box-flex: 0; flex: 0 0 auto; color: var(--vod-accent); font-size: 1rem; }
+.vod-ep-loading { color: var(--vod-dim); font-size: 1.125rem; padding: 0.875rem 0.25rem; }
 
 /* ── Narrow viewports (simulator preview window) ─────────────────────── */
 @media (max-width: 900px) {
-    #vod-detail-inner { -webkit-box-orient: vertical; -webkit-box-direction: normal; flex-direction: column; padding: 80px 28px 48px; }
-    #vod-detail-poster-wrap { width: 190px; margin: 0 0 24px; }
-    #vod-detail-title { font-size: 34px; }
+    #vod-detail-inner { -webkit-box-orient: vertical; -webkit-box-direction: normal; flex-direction: column; padding: 5rem 1.75rem 3rem; }
+    #vod-detail-poster-wrap { width: 11.875rem; margin: 0 0 1.5rem; }
+    #vod-detail-title { font-size: 2.125rem; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   "See all" tile + category browser
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The tile that ends a truncated rail. Shaped exactly like a poster card so it
+   sits in the row without breaking its rhythm, but visibly not a title — a
+   dashed outline rather than artwork, so it never reads as a real entry. */
+.vod-more-poster {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--vod-surface, #16171d);
+    border: 2px dashed rgba(255,255,255,0.18);
+}
+.vod-more-dots {
+    font-size: 2rem; font-weight: 800; letter-spacing: 0.12em;
+    color: rgba(255,255,255,0.55); line-height: 1;
+}
+.vod-more-count {
+    margin-top: 0.625rem;
+    font-size: 0.9375rem; font-weight: 600;
+    color: rgba(255,255,255,0.42);
+}
+.vod-card-more.tv-focus-visible .vod-more-poster {
+    border-color: var(--accent);
+    border-style: solid;
+    background: rgba(229,0,30,0.10);
+}
+.vod-card-more.tv-focus-visible .vod-more-dots  { color: #fff; }
+.vod-card-more.tv-focus-visible .vod-more-count { color: rgba(255,255,255,0.75); }
+
+/* ── Category browser ─────────────────────────────────────────────────────
+   Sits above the rails but below the detail overlay (z-index 50), so opening a
+   title from the grid stacks on top of it and closing returns here. */
+#vod-category {
+    position: fixed;
+    top: 0; right: 0; bottom: 0; left: 0;
+    z-index: 40;
+    background: var(--vod-bg, #0b0c10);
+    overflow-y: auto;
+    padding-bottom: 3rem;
+}
+
+/* Sticky so the way out stays reachable however far down you scroll — on a
+   remote, scrolling back to the top to find Back is a real cost. */
+#vod-category-bar {
+    position: -webkit-sticky; position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center;
+    padding: 1.5rem 2.5rem;
+    background: var(--vod-bg, #0b0c10);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+#vod-category-bar .vod-btn { flex-shrink: 0; margin-right: 1.5rem; }
+#vod-category-title {
+    font-size: 1.75rem; font-weight: 700; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; flex: 1;
+}
+#vod-category-count {
+    flex-shrink: 0; margin-left: 1.5rem;
+    font-size: 1.0625rem; color: rgba(255,255,255,0.45);
+}
+
+#vod-category-grid { padding: 2.125rem 2.5rem 0; }
+
+/* Grids centre their last row, which looks wrong for a browse view where the
+   rows should read as a left-aligned block. */
+#vod-category-grid.vod-grid { justify-content: flex-start; max-width: none; }
+
+.vod-cat-loading {
+    padding: 4rem 2.5rem;
+    font-size: 1.25rem; color: rgba(255,255,255,0.45);
 }

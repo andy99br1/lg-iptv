@@ -26,15 +26,15 @@
     animation: glowPulse 8s ease-in-out infinite alternate;
 }
 .glow-a {
-    width: 600px; height: 600px;
+    width: 37.5rem; height: 37.5rem;
     background: radial-gradient(circle, #3b82f6 0%, transparent 70%);
-    top: -150px; left: -100px;
+    top: -9.375rem; left: -6.25rem;
     animation-delay: 0s;
 }
 .glow-b {
-    width: 500px; height: 500px;
+    width: 31.25rem; height: 31.25rem;
     background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
-    bottom: -120px; right: -80px;
+    bottom: -7.5rem; right: -5rem;
     animation-delay: -4s;
 }
 @keyframes glowPulse {
@@ -49,11 +49,11 @@
        which left the modal shrunk to its content and overflowing (header/tabs
        clipped off-screen). max-width/max-height are equivalent and universal. */
     width: 94vw;
-    max-width: 980px;
+    max-width: 61.25rem;
     max-height: 92vh;
     background: var(--bg2, #111218);
     border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 28px;
+    border-radius: 1.75rem;
     box-shadow:
         0 0 0 1px rgba(255,255,255,0.04) inset,
         0 32px 80px rgba(0,0,0,0.7),
@@ -72,8 +72,8 @@
 #modal-header {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 22px 28px 18px;
+    gap: 1rem;
+    padding: 1.375rem 1.75rem 1.125rem;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     flex-shrink: 0;
 }
@@ -82,11 +82,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: 2.75rem;
+    height: 2.75rem;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 12px;
+    border-radius: 0.75rem;
     color: var(--text-dim, #8a8f9e);
     cursor: pointer;
     flex-shrink: 0;
@@ -109,11 +109,11 @@
 #modal-title {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 0.625rem;
     flex: 1;
 }
 .title-text {
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: 700;
     color: var(--text, #e8eaf0);
     letter-spacing: -0.01em;
@@ -127,8 +127,11 @@
 /* ── Tab strip ───────────────────────────────────────────────────────────────── */
 #tab-strip {
     display: flex;
-    gap: 4px;
-    padding: 12px 20px 0;
+    /* Wraps to a second line rather than clipping once the tab count outgrows
+       the modal width — at 155% interface size even eight tabs are tight. */
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.75rem 1.25rem 0;
     flex-shrink: 0;
     background: var(--bg2, #111218);
     border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -137,19 +140,19 @@
 .tab-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 11px 20px 13px;
+    gap: 0.5rem;
+    padding: 0.6875rem 1.25rem 0.8125rem;
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    border-radius: 10px 10px 0 0;
+    border-radius: 0.625rem 0.625rem 0 0;
     color: var(--text-dim, #8a8f9e);
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
     transition: color 0.15s, background 0.15s, border-color 0.15s;
-    margin-bottom: -1px;
+    margin-bottom: -0.0625rem;
 }
 .tab-btn:hover {
     color: var(--text, #e8eaf0);
@@ -197,15 +200,15 @@
 .settings-panel {
     display: none;
     flex-direction: column;
-    gap: 18px;
-    padding: 26px 28px 28px;
+    gap: 1.125rem;
+    padding: 1.625rem 1.75rem 1.75rem;
     overflow-y: auto;
     flex: 1;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
-.settings-panel::-webkit-scrollbar { width: 5px; }
-.settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+.settings-panel::-webkit-scrollbar { width: 0.3125rem; }
+.settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 0.1875rem; }
 .settings-panel.active {
     display: -webkit-box;
     display: flex;
@@ -223,7 +226,7 @@
 }
 
 .panel-hint {
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--text-faint, #565b6e);
     line-height: 1.6;
     margin: 0;
@@ -239,13 +242,13 @@
 
 /* Left sidebar — profile list */
 #profiles-sidebar {
-    width: 220px;
+    width: 13.75rem;
     flex-shrink: 0;
     border-right: 1px solid rgba(255,255,255,0.06);
     display: flex;
     flex-direction: column;
-    padding: 16px 12px;
-    gap: 10px;
+    padding: 1rem 0.75rem;
+    gap: 0.625rem;
     overflow: hidden;
 }
 
@@ -254,24 +257,24 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 0.25rem;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
-#profiles-list::-webkit-scrollbar { width: 4px; }
-#profiles-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+#profiles-list::-webkit-scrollbar { width: 0.25rem; }
+#profiles-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 0.125rem; }
 
 /* Individual profile row in the list */
 .profile-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 11px 12px;
-    border-radius: 10px;
+    gap: 0.5rem;
+    padding: 0.6875rem 0.75rem;
+    border-radius: 0.625rem;
     border: 1px solid transparent;
     background: transparent;
     color: var(--text-dim, #8a8f9e);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     text-align: left;
@@ -300,8 +303,8 @@
 /* Active-profile tick */
 .profile-tick {
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -320,15 +323,15 @@
 
 /* ── Profile type badge ──────────────────────────────────────────────────────── */
 .profile-type-badge {
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     letter-spacing: 0.04em;
-    padding: 2px 6px;
-    border-radius: 5px;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.3125rem;
     background: rgba(255,255,255,0.07);
     color: var(--text-dim, #8a8f9e);
     flex-shrink: 0;
-    margin-left: 2px;
+    margin-left: 0.125rem;
 }
 .profile-item.is-active .profile-type-badge {
     background: rgba(59,130,246,0.15);
@@ -338,8 +341,8 @@
 /* ── Active profile dot ──────────────────────────────────────────────────────── */
 .profile-active-dot {
     display: inline-block;
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     background: var(--accent, #3b82f6);
     flex-shrink: 0;
@@ -356,12 +359,12 @@
     flex-direction: column;
     min-width: 0;
     overflow-y: auto;
-    padding: 22px 24px 24px;
+    padding: 1.375rem 1.5rem 1.5rem;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
-#profile-editor::-webkit-scrollbar { width: 4px; }
-#profile-editor::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+#profile-editor::-webkit-scrollbar { width: 0.25rem; }
+#profile-editor::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 0.125rem; }
 
 #editor-empty {
     flex: 1;
@@ -374,23 +377,23 @@
     align-items: center;
     -webkit-box-pack: center;
     justify-content: center;
-    gap: 8px;
+    gap: 0.5rem;
     color: var(--text-faint, #565b6e);
-    font-size: 14px;
+    font-size: 0.875rem;
     text-align: center;
     line-height: 1.7;
 }
 #editor-empty p { margin: 0; }
 #empty-add-profile-btn {
     width: auto;
-    min-width: 180px;
-    margin-top: 12px;
+    min-width: 11.25rem;
+    margin-top: 0.75rem;
 }
 
 #editor-form {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 1.125rem;
 }
 /* The `display:flex` above otherwise overrides the [hidden] attribute, leaving
    the form visible in the empty (no-profile) state. */
@@ -399,12 +402,12 @@
 #editor-header {
     display: flex;
     align-items: flex-end;
-    gap: 12px;
+    gap: 0.75rem;
 }
 #editor-header .settings-btn-danger {
     flex-shrink: 0;
     align-self: flex-end;
-    height: 48px;
+    height: 3rem;
 }
 
 /* ── Source type toggle (Xtream | M3U) ──────────────────────────────────────── */
@@ -412,17 +415,17 @@
     display: flex;
     gap: 0;
     border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 10px;
+    border-radius: 0.625rem;
     overflow: hidden;
     flex-shrink: 0;
 }
 .type-btn {
     flex: 1;
-    padding: 10px 0;
+    padding: 0.625rem 0;
     background: transparent;
     border: none;
     color: var(--text-dim, #8a8f9e);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
@@ -450,13 +453,13 @@
 #url-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0.5rem;
 }
 
 .url-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 0.5rem;
 }
 
 .url-row .settings-input {
@@ -465,17 +468,17 @@
 
 .url-remove-btn {
     flex-shrink: 0;
-    width: 36px;
-    height: 36px;
+    width: 2.25rem;
+    height: 2.25rem;
     display: flex;
     align-items: center;
     justify-content: center;
     background: transparent;
     border: 1px solid rgba(239,68,68,0.25);
-    border-radius: 8px;
+    border-radius: 0.5rem;
     color: rgba(239,68,68,0.6);
     cursor: pointer;
-    font-size: 18px;
+    font-size: 1.125rem;
     line-height: 1;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
     font-family: inherit;
@@ -494,8 +497,8 @@
 /* URL index badge */
 .url-index {
     flex-shrink: 0;
-    width: 22px;
-    font-size: 12px;
+    width: 1.375rem;
+    font-size: 0.75rem;
     font-weight: 700;
     color: var(--text-faint, #565b6e);
     text-align: right;
@@ -503,42 +506,42 @@
 }
 
 .field-hint {
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 400;
     color: var(--text-faint, #565b6e);
     letter-spacing: 0;
     text-transform: none;
-    margin-left: 6px;
+    margin-left: 0.375rem;
 }
 
 #prof-epg-section {
     border-top: 1px solid rgba(255,255,255,0.06);
-    padding-top: 16px;
+    padding-top: 1rem;
 }
 
 #editor-actions {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.625rem;
     border-top: 1px solid rgba(255,255,255,0.06);
-    padding-top: 16px;
+    padding-top: 1rem;
 }
 
 /* ── Field groups ────────────────────────────────────────────────────────────── */
 .field-group {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 0.4375rem;
     flex: 1;
 }
 
 .field-row {
     display: flex;
-    gap: 14px;
+    gap: 0.875rem;
 }
 
 .field-label {
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -548,41 +551,65 @@
 /* ── Inputs ──────────────────────────────────────────────────────────────────── */
 .settings-input {
     width: 100%;
-    padding: 14px 16px;
+    padding: 0.875rem 1rem;
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.09);
-    border-radius: 12px;
+    border-radius: 0.75rem;
     color: var(--text, #e8eaf0);
-    font-size: 16px;
+    font-size: 1rem;
     outline: none;
     transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
     box-sizing: border-box;
     font-family: inherit;
 }
 .settings-input::placeholder { color: var(--text-faint, #565b6e); }
+/* background-COLOR, not the `background` shorthand: the shorthand also resets
+   background-repeat/position/image, which tiled .settings-select's chevron
+   artwork across the whole control the moment it took focus. */
 .settings-input:focus,
 .settings-input.tv-focus-visible {
     border-color: var(--accent, #3b82f6);
-    background: rgba(59,130,246,0.06);
+    background-color: rgba(59,130,246,0.06);
     box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
 }
 
+/* Dropdowns are driven by LEFT/RIGHT on the remote, never by opening the native
+   popup (see stepSelect() in settings.js). The chevrons therefore point left and
+   right rather than down, so the control advertises how it's actually operated. */
 .settings-select {
     -webkit-appearance: none;
     appearance: none;
     cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23565b6e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='10' viewBox='0 0 34 10'%3E%3Cpath d='M5 1L1 5l4 4M29 1l4 4-4 4' stroke='%23565b6e' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 14px center;
-    padding-right: 38px;
+    background-position: right 0.75rem center;
+    padding-right: 3.25rem;
+}
+/* Brighten the arrows when the row has the focus ring, so it's obvious which
+   control the D-pad is about to act on. */
+.settings-select.tv-focus-visible {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='10' viewBox='0 0 34 10'%3E%3Cpath d='M5 1L1 5l4 4M29 1l4 4-4 4' stroke='%233b82f6' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ── Diagnostics readout ─────────────────────────────────────────────────────── */
+.diag-value {
+    flex-shrink: 0;
+    margin-left: 1rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--text, #e8eaf0);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    max-width: 55%;
+    word-break: break-word;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .settings-btn {
     width: 100%;
-    padding: 15px 20px;
-    border-radius: 12px;
-    font-size: 15px;
+    padding: 0.9375rem 1.25rem;
+    border-radius: 0.75rem;
+    font-size: 0.9375rem;
     font-weight: 700;
     cursor: pointer;
     border: 1px solid transparent;
@@ -621,8 +648,8 @@
     border-color: rgba(239,68,68,0.3);
     color: #f87171;
     width: auto;
-    min-width: 90px;
-    padding: 13px 22px;
+    min-width: 5.625rem;
+    padding: 0.8125rem 1.375rem;
     flex-shrink: 0;
     box-sizing: border-box;
 }
@@ -634,7 +661,7 @@
 
 /* ── Status line ─────────────────────────────────────────────────────────────── */
 .settings-status {
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--text-dim, #8a8f9e);
     min-height: 1.2em;
     font-weight: 500;
@@ -647,40 +674,63 @@
 .cache-actions {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.625rem;
 }
 
 .cache-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 1rem;
     background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 16px 18px;
+    border-radius: 0.875rem;
+    padding: 1rem 1.125rem;
 }
 
 .cache-info {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 0.1875rem;
+}
+
+/* A diagnostic row whose value is a block of text — the raw panel reply. The
+   normal row puts its value in a narrow right-aligned column, which is right
+   for a count and unreadable for JSON, so this variant stacks instead. */
+.diag-block {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+}
+
+.diag-raw {
+    font-family: monospace;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    color: var(--text-dim, #a9b0c0);
+    background: rgba(0,0,0,0.28);
+    border-radius: 0.5rem;
+    padding: 0.75rem 0.875rem;
+    /* Provider replies are one long unbroken token as often as not. */
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
 }
 
 .cache-label {
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 600;
     color: var(--text, #e8eaf0);
 }
 
 .cache-desc {
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--text-faint, #565b6e);
 }
 
 /* ── Remote QR — permanent right column ──────────────────────────────────────── */
 #remote-qr-section {
-    width: 230px;
+    width: 14.375rem;
     -webkit-box-flex: 0;
     flex-shrink: 0;
     border-left: 1px solid rgba(255,255,255,0.06);
@@ -688,25 +738,25 @@
     display: flex;
 }
 #remote-qr-inner {
-    width: 230px;
-    padding: 20px 16px 16px;
+    width: 14.375rem;
+    padding: 1.25rem 1rem 1rem;
     display: -webkit-box;
     display: flex;
     -webkit-box-orient: vertical;
     -webkit-box-direction: normal;
     flex-direction: column;
-    gap: 12px;
+    gap: 0.75rem;
     overflow-y: auto;
     height: 100%;
     box-sizing: border-box;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
-#remote-qr-inner::-webkit-scrollbar { width: 4px; }
-#remote-qr-inner::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+#remote-qr-inner::-webkit-scrollbar { width: 0.25rem; }
+#remote-qr-inner::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 0.125rem; }
 
 .remote-qr-hint {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--text-dim, #8a8a9a);
     line-height: 1.5;
     margin: 0;
@@ -718,40 +768,40 @@
     justify-content: center;
 }
 #remote-qr-img {
-    border-radius: 10px;
+    border-radius: 0.625rem;
     background: #fff;
-    padding: 8px;
+    padding: 0.5rem;
     display: block;
 }
 #remote-qr-url {
     text-align: center;
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text-dim, #8a8a9a);
     word-break: break-all;
 }
 #remote-qr-status {
     text-align: center;
-    min-height: 18px;
+    min-height: 1.125rem;
 }
 
 /* ── Category toggle rows (Live TV & VOD panels) ─────────────────────────────── */
 .cat-section-label {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 700;
     color: var(--text-dim, #8a8a9a);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 10px;
+    margin-bottom: 0.625rem;
 }
 .cat-toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 11px 14px;
-    border-radius: 10px;
+    padding: 0.6875rem 0.875rem;
+    border-radius: 0.625rem;
     border: 1px solid rgba(255,255,255,0.05);
     background: rgba(255,255,255,0.02);
-    margin-bottom: 6px;
+    margin-bottom: 0.375rem;
     transition: background 0.15s, border-color 0.15s;
 }
 .cat-toggle-row.hidden-cat {
@@ -759,23 +809,23 @@
     border-color: rgba(229,0,30,0.2);
 }
 .cat-toggle-name {
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--text, #f0f0f5);
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    margin-right: 12px;
+    margin-right: 0.75rem;
 }
 .cat-toggle-row.hidden-cat .cat-toggle-name {
     color: var(--text-dim, #8a8a9a);
     text-decoration: line-through;
 }
 .cat-toggle-btn {
-    width: 42px;
-    height: 24px;
-    border-radius: 12px;
+    width: 2.625rem;
+    height: 1.5rem;
+    border-radius: 0.75rem;
     border: none;
     background: rgba(255,255,255,0.12);
     cursor: pointer;
@@ -788,17 +838,17 @@
 }
 .cat-toggle-knob {
     position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
+    top: 0.1875rem;
+    left: 0.1875rem;
+    width: 1.125rem;
+    height: 1.125rem;
     border-radius: 50%;
     background: #fff;
     transition: left 0.2s;
     pointer-events: none;
 }
 .cat-toggle-btn[aria-pressed="true"] .cat-toggle-knob {
-    left: 21px;
+    left: 1.3125rem;
 }
 .cat-toggle-btn.tv-focus-visible {
     box-shadow: 0 0 0 3px rgba(229,0,30,0.5);

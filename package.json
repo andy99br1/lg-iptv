@@ -4,7 +4,7 @@
   "description": "A fast, lightweight IPTV player built for webOS TVs by LG.",
   "main": "index.js",
   "scripts": {
-    "build": "babel js --out-dir dist/js && babel api --out-dir dist/api",
+    "build": "babel js --out-dir dist/js",
     "clean": "rmdir /s /q dist"
   },
   "repository": {

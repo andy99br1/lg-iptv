@@ -15,23 +15,36 @@
     --text:       #f0f0f5;
     --text-dim:   #80808c;
     --text-faint: #4a4a56;
-    --sidebar-w:  420px;
-    --pip-w:      620px;
-    --pip-h:      349px;
-    --logo-w:     84px;
-    --name-w:     260px;
-    --row-h:      96px;
-    --radius:     10px;
+    --sidebar-w:  26.25rem;
+    --pip-w:      38.75rem;
+    --pip-h:      21.8125rem;
+    --logo-w:     5.25rem;
+    --name-w:     16.25rem;
+    --row-h:      6rem;
+    --radius:     0.625rem;
     --border:     1px solid #22222a;
     --focus-ring: 0 0 0 3px var(--accent);
 }
 
-/* ── Base ─────────────────────────────────────────────────────────────────────── */
+/* ── Base ─────────────────────────────────────────────────────────────────────
+   Every length in this app is expressed in rem against a 16px reference, so the
+   whole UI scales from this one declaration. The inline scale bootstrap in each
+   page's <head> overwrites it from `iptv_ui_scale` before first paint; 16px here
+   is the 100% fallback if that script is missing or storage is unreadable.
+
+   Do NOT set the root font-size in rem — on the root element `rem` resolves
+   against the *inherited* 16px, so `1.375rem` here would silently make 1rem =
+   22px and inflate every converted value by 37%. Keep px on html, rem below. */
+html {
+    font-size: 16px;
+}
 html, body {
     height: 100%; overflow: hidden;
     background: var(--bg); color: var(--text);
     font-family: system-ui, -apple-system, 'LG Display', sans-serif;
-    font-size: 22px;
+}
+body {
+    font-size: 1.375rem;
 }
 
 *:focus:not(:focus-visible) { outline: none; }
@@ -52,21 +65,21 @@ html, body {
 }
 .modal-box {
     background: var(--bg3); border: var(--border);
-    border-radius: 14px; padding: 34px 36px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.7); min-width: 480px; max-width: 580px; width: 90%;
+    border-radius: 0.875rem; padding: 2.125rem 2.25rem;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7); min-width: 30rem; max-width: 36.25rem; width: 90%;
 }
-.modal-heading { font-size: 22px; font-weight: 700; margin-bottom: 22px; }
+.modal-heading { font-size: 1.375rem; font-weight: 700; margin-bottom: 1.375rem; }
 .modal-input {
-    width: 100%; padding: 16px 18px;
+    width: 100%; padding: 1rem 1.125rem;
     background: var(--bg4); border: var(--border);
     border-radius: var(--radius); color: var(--text);
-    font-size: 20px; outline: none; margin-bottom: 22px;
+    font-size: 1.25rem; outline: none; margin-bottom: 1.375rem;
 }
 .modal-input:focus { border-color: var(--gold); }
-.modal-btns { display: flex; gap: 12px; justify-content: flex-end; }
+.modal-btns { display: flex; gap: 0.75rem; justify-content: flex-end; }
 .modal-btn {
-    padding: 16px 34px; border-radius: var(--radius);
-    font-size: 19px; font-weight: 600; cursor: pointer;
+    padding: 1rem 2.125rem; border-radius: var(--radius);
+    font-size: 1.1875rem; font-weight: 600; cursor: pointer;
     background: var(--bg5); border: var(--border); color: var(--text-dim);
 }
 .modal-btn:hover, .modal-btn.tv-focus-visible { background: var(--bg4); color: var(--text); }

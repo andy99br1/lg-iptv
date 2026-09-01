@@ -7,6 +7,9 @@
     <meta name="theme-color" content="#08090d" />
     <link rel="stylesheet" href="../assets/base.css" />
     <link rel="stylesheet" href="../assets/vod.css" />
+    <!-- Blocking on purpose: detects the video pipeline and sets the UI scale
+         before first paint. Must stay in <head> and must stay synchronous. -->
+    <script src="../assets/boot.js"></script>
 </head>
 <body>
 
@@ -64,6 +67,24 @@
     <div id="vod-search-grid" class="vod-grid"></div>
 </div>
 
+<!-- ── Category browser ──────────────────────────────────────────────
+     Every title in one category, reached from the "···" tile at the end of a
+     rail. A rail shows the first dozen; this is where the rest live. -->
+<div id="vod-category" hidden>
+    <div id="vod-category-bar">
+        <button id="vod-category-back" class="vod-btn vod-btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M11 4L6 9L11 14" stroke="currentColor" stroke-width="2.2"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Back</span>
+        </button>
+        <h2 id="vod-category-title"></h2>
+        <span id="vod-category-count"></span>
+    </div>
+    <div id="vod-category-grid" class="vod-grid"></div>
+</div>
+
 <!-- ── Detail overlay ───────────────────────────────────────────── -->
 <div id="vod-detail" hidden role="dialog" aria-modal="true" aria-label="Title details">
     <div id="vod-detail-backdrop"></div>
@@ -119,8 +140,25 @@
 </div>
 
 <script src="../dist/js/polyfills.js"></script>
-<script src="../dist/js/iptv-core.js"></script>
+<script src="../dist/js/core/store.js"></script>
+<script src="../dist/js/core/net.js"></script>
+<script src="../dist/js/core/dom.js"></script>
+<script src="../dist/js/core/config.js"></script>
+<!-- Optional, gitignored: hardcodes IPTV_CONFIG for development. -->
 <script src="../config/config.js"></script>
+<script src="../dist/js/data/subtitles.js"></script>
+<script src="../dist/js/data/favourites.js"></script>
+<!-- VOD's own modules. state.js first: the others read the DOM refs and the
+     resolved config it declares at load time. vod.js last: it boots the page.
+     category.js before nav.js — the sidebar wiring references closeCategory. -->
+<script src="../dist/js/vod/state.js"></script>
+<script src="../dist/js/vod/library.js"></script>
+<script src="../dist/js/vod/cards.js"></script>
+<script src="../dist/js/vod/rails.js"></script>
+<script src="../dist/js/vod/detail.js"></script>
+<script src="../dist/js/vod/category.js"></script>
+<script src="../dist/js/vod/search.js"></script>
+<script src="../dist/js/vod/nav.js"></script>
 <script src="../dist/js/vod.js"></script>
 </body>
 </html>

@@ -7,6 +7,9 @@
     <meta name="theme-color" content="#0c0c0e" />
     <link rel="stylesheet" href="assets/base.css" />
     <link rel="stylesheet" href="assets/home.css" />
+    <!-- Blocking on purpose: detects the video pipeline and sets the UI scale
+         before first paint. Must stay in <head> and must stay synchronous. -->
+    <script src="assets/boot.js"></script>
 </head>
 <body>
     <div id="home">
@@ -51,8 +54,13 @@
         </div>
     </div>
 
+    <!-- Load order is a dependency chain, not a preference:
+         polyfills → core (Store → Net → Config, Dom) → page script. -->
     <script src="dist/js/polyfills.js"></script>
-    <script src="dist/js/iptv-core.js"></script>
+    <script src="dist/js/core/store.js"></script>
+    <script src="dist/js/core/net.js"></script>
+    <script src="dist/js/core/dom.js"></script>
+    <script src="dist/js/core/config.js"></script>
     <script src="dist/js/home.js"></script>
     <script defer src="dist/js/prewarm.js"></script>
 </body>

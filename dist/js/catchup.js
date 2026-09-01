@@ -16,7 +16,7 @@
 (function () {
   'use strict';
 
-  var cfg = IPTVCore.resolveConfig();
+  var cfg = Config.resolve();
 
   /* ── DOM refs ────────────────────────────────────────────────────── */
   var elStatus = document.getElementById('cu-status');
@@ -198,10 +198,10 @@
     });
   }
   function loadChannels() {
-    var chKey = 'cu_channels_' + IPTVCore.base(cfg);
-    var catKey = 'cu_cats_' + IPTVCore.base(cfg);
-    var cachedCh = IPTVCore.cacheGet(chKey),
-      cachedCat = IPTVCore.cacheGet(catKey);
+    var chKey = 'cu_channels_' + Config.base(cfg);
+    var catKey = 'cu_cats_' + Config.base(cfg);
+    var cachedCh = Store.cacheGet(chKey),
+      cachedCat = Store.cacheGet(catKey);
     if (cachedCh && cachedCh.length) {
       allChannels = cachedCh;
       catName = {};
@@ -248,8 +248,8 @@
         });
       }
       allChannels = arch;
-      IPTVCore.cacheSet(chKey, arch);
-      if (cats.length) IPTVCore.cacheSet(catKey, cats);
+      Store.cacheSet(chKey, arch);
+      if (cats.length) Store.cacheSet(catKey, cats);
       buildCatMaps(cats.length ? cats : cachedCat || []);
       setStatus(arch.length + ' channels');
       renderSidebar();
@@ -701,24 +701,36 @@
   }
 
   /* ── Playback ────────────────────────────────────────────────────── */
+  /* One navigation per page load — same reasoning as vod/detail.js: a second
+     call loses the navigation race but still overwrites the metadata the
+     first one is about to hand over. */
+  var _navigating = false;
   function playListing(streamId, chName, chIcon, e) {
+    if (_navigating) return;
+    _navigating = true;
     var s = epgStart(e),
       en = epgEnd(e);
     var durMin = Math.max(1, Math.round((en - s) / 60000));
     var urls = xtreamBuildTimeshiftURLs(cfg, streamId, new Date(s), durMin);
     var title = (chName || '') + ' · ' + (decode(e.title) || '');
+    /* Same one-shot pairing the VOD path uses — see player-vod.js. */
+    var token = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     try {
       localStorage.setItem('iptv_play_url', urls[0]);
       localStorage.setItem('iptv_play_title', title);
       localStorage.setItem('iptv_play_meta', JSON.stringify({
         url: urls[0],
+        token: token,
         urls: urls,
         type: 'catchup',
         name: title,
-        icon: chIcon || ''
+        icon: chIcon || '',
+        /* The OSD title is "Channel · Programme", which matches nothing
+           on OpenSubtitles. Search for the programme alone. */
+        search_name: decode(e.title) || ''
       }));
     } catch (err) {}
-    window.location.href = '../pages/player.html?url=' + encodeURIComponent(urls[0]) + '&title=' + encodeURIComponent(title);
+    window.location.href = '../pages/player.html?t=' + encodeURIComponent(token) + '&url=' + encodeURIComponent(urls[0]) + '&title=' + encodeURIComponent(title);
   }
 
   /* ── D-pad navigation ────────────────────────────────────────────── */

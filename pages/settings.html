@@ -7,6 +7,9 @@
     <meta name="theme-color" content="#08090d" />
     <link rel="stylesheet" href="../assets/base.css" />
     <link rel="stylesheet" href="../assets/settings.css" />
+    <!-- Blocking on purpose: detects the video pipeline and sets the UI scale
+         before first paint. Must stay in <head> and must stay synchronous. -->
+    <script src="../assets/boot.js"></script>
 </head>
 <body>
 
@@ -31,11 +34,15 @@
         <!-- Tab strip -->
         <div id="tab-strip" role="tablist">
             <button class="tab-btn active" data-value="profiles" role="tab" aria-selected="true">Profiles</button>
+            <button class="tab-btn" data-value="display" role="tab" aria-selected="false">Display</button>
+            <button class="tab-btn" data-value="player"  role="tab" aria-selected="false">Player</button>
+            <button class="tab-btn" data-value="subtitles" role="tab" aria-selected="false">Subtitles</button>
             <button class="tab-btn" data-value="epg"     role="tab" aria-selected="false">EPG</button>
             <button class="tab-btn" data-value="livetv"  role="tab" aria-selected="false">Live TV</button>
             <button class="tab-btn" data-value="vod"     role="tab" aria-selected="false">VOD</button>
             <button class="tab-btn" data-value="cache"   role="tab" aria-selected="false">Cache</button>
             <button class="tab-btn" data-value="updates" role="tab" aria-selected="false">Updates</button>
+            <button class="tab-btn" data-value="diag"    role="tab" aria-selected="false">Diagnostics</button>
         </div>
 
         <!-- Body row: panels on left, QR panel always on right -->
@@ -145,6 +152,148 @@
                     </div><!-- /profiles-layout -->
                 </div><!-- /panel-profiles -->
 
+                <!-- Panel: Display -->
+                <div class="settings-panel" id="panel-display" role="tabpanel">
+                    <p class="panel-hint">
+                        Interface size scales every screen — Live TV, VOD, Catch-up and this one.
+                        It never changes the video itself, so fullscreen playback is unaffected.
+                    </p>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-ui-scale">Interface size</label>
+                        <select class="settings-input settings-select" id="cfg-ui-scale"></select>
+                    </div>
+                    <div id="ui-scale-status" class="settings-status"></div>
+                </div>
+
+                <!-- Panel: Player -->
+                <div class="settings-panel" id="panel-player" role="tabpanel">
+                    <p class="panel-hint">
+                        Streams are tried with each player in turn until one works. Pick a default
+                        if one player is reliably better on your TV — it's tried first, and the
+                        others still act as fallbacks. The RED button cycles players during playback.
+                    </p>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-default-player">Default player</label>
+                        <select class="settings-input settings-select" id="cfg-default-player">
+                            <option value="auto">Automatic — try each in order</option>
+                            <option value="native">Native — TV decoder (HEVC, HDR, Dolby)</option>
+                            <option value="hls">HLS.js — software HLS (H.264 / AAC)</option>
+                            <option value="ts">Native TS — raw MPEG-TS</option>
+                            <option value="last">Remember last used (RED button)</option>
+                        </select>
+                    </div>
+                    <p class="panel-hint" id="player-last-hint" style="display:none"></p>
+                    <div id="player-pref-status" class="settings-status"></div>
+
+                    <div class="cat-section-label" style="margin-top:0.5rem">Video output</div>
+                    <p class="panel-hint">
+                        Older LG sets draw video on a separate hardware layer that can't be
+                        rounded or clipped, which shows up as a black Live&nbsp;TV preview box
+                        with working sound. Compatibility mode draws the preview square and
+                        unclipped to fix that. Automatic already picks it for webOS&nbsp;5 and
+                        below — change this only if the preview is black, or if it's fine and
+                        you'd rather have the rounded corners back.
+                    </p>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-pip-mode">Live TV preview rendering</label>
+                        <select class="settings-input settings-select" id="cfg-pip-mode">
+                            <option value="auto">Automatic — decide from the TV's browser</option>
+                            <option value="compat">Compatibility — square, unclipped preview</option>
+                            <option value="standard">Standard — rounded, composited preview</option>
+                        </select>
+                    </div>
+                    <p class="panel-hint" id="pip-mode-hint"></p>
+
+                    <p class="panel-hint">
+                        Multiview (the BLUE button on Live&nbsp;TV) plays several channels at
+                        once. Every TV has a limited number of video decoders — ask for more
+                        than it has and the extra tiles stay black, sometimes taking the
+                        working ones with them. Automatic uses 4 on webOS&nbsp;6 and newer and
+                        2 below that. Lower it if tiles go black; raise it if your TV copes.
+                    </p>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-mv-tiles">Multiview tiles</label>
+                        <select class="settings-input settings-select" id="cfg-mv-tiles">
+                            <option value="0">Automatic — decide from the TV</option>
+                            <option value="2">2 — side by side</option>
+                            <option value="3">3 — one large, two small</option>
+                            <option value="4">4 — 2×2 grid</option>
+                        </select>
+                    </div>
+                    <div id="pip-mode-status" class="settings-status"></div>
+                </div>
+
+                <!-- Panel: Subtitles -->
+                <div class="settings-panel" id="panel-subtitles" role="tabpanel">
+                    <p class="panel-hint">
+                        How subtitles look, and where to get them when your provider doesn't
+                        supply any. Position and timing are adjusted during playback instead —
+                        press the subtitles button on the player, since both only make sense
+                        while you can see the result.
+                    </p>
+
+                    <div class="cat-section-label">Appearance</div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label class="field-label" for="cfg-subs-size">Text size</label>
+                            <select class="settings-input settings-select" id="cfg-subs-size">
+                                <option value="md">Normal</option>
+                                <option value="lg">Large</option>
+                                <option value="xl">Larger</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label" for="cfg-subs-style">Style</label>
+                            <select class="settings-input settings-select" id="cfg-subs-style">
+                                <option value="shadow">Shadow — no background</option>
+                                <option value="box">Boxed — solid background</option>
+                                <option value="plain">Plain — no shadow or box</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-subs-colour">Colour</label>
+                        <select class="settings-input settings-select" id="cfg-subs-colour">
+                            <option value="white">White</option>
+                            <option value="yellow">Yellow</option>
+                            <option value="cyan">Cyan</option>
+                        </select>
+                    </div>
+                    <div id="subs-appearance-status" class="settings-status"></div>
+
+                    <div class="cat-section-label" style="margin-top:0.5rem">OpenSubtitles</div>
+                    <p class="panel-hint">
+                        Most providers embed subtitles in the video rather than supplying
+                        separate files, and this TV's decoder often can't read those. Searching
+                        OpenSubtitles sidesteps the provider entirely. Needs a free API key from
+                        opensubtitles.com/consumers. Adding your account login as well raises
+                        the daily download limit.
+                    </p>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-os-key">API key</label>
+                        <input class="settings-input" id="cfg-os-key" type="text"
+                               placeholder="paste your API key" spellcheck="false" autocomplete="off" />
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="cfg-os-lang">Subtitle language</label>
+                        <select class="settings-input settings-select" id="cfg-os-lang"></select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label class="field-label" for="cfg-os-user">Username <span class="field-hint">(optional)</span></label>
+                            <input class="settings-input" id="cfg-os-user" type="text"
+                                   placeholder="opensubtitles username" spellcheck="false" autocomplete="off" />
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label" for="cfg-os-pass">Password <span class="field-hint">(optional)</span></label>
+                            <input class="settings-input" id="cfg-os-pass" type="password"
+                                   placeholder="password" autocomplete="off" />
+                        </div>
+                    </div>
+                    <button class="settings-btn settings-btn-secondary" id="cfg-os-test-btn">Test connection</button>
+                    <div id="os-status" class="settings-status"></div>
+                </div>
+
                 <!-- Panel: EPG -->
                 <div class="settings-panel" id="panel-epg" role="tabpanel">
                     <p class="panel-hint">Global EPG fallback used when no profile-specific EPG is set.</p>
@@ -235,6 +384,17 @@
                     </div>
                 </div>
 
+                <!-- Panel: Diagnostics -->
+                <div class="settings-panel" id="panel-diag" role="tabpanel">
+                    <p class="panel-hint">
+                        What this TV actually reports, gathered on the device. Read this instead of
+                        needing a developer console — it answers what the app can and can't do here.
+                    </p>
+                    <div id="diag-list"></div>
+                    <button class="settings-btn settings-btn-secondary" id="diag-refresh-btn">Refresh</button>
+                    <div id="diag-status" class="settings-status"></div>
+                </div>
+
             </div><!-- /panels-wrap -->
 
             <!-- QR panel — always visible, right of all panels -->
@@ -256,7 +416,13 @@
 </div><!-- /settings-page -->
 
 <script src="../dist/js/polyfills.js"></script>
+<script src="../dist/js/core/store.js"></script>
+<script src="../dist/js/core/net.js"></script>
+<script src="../dist/js/core/dom.js"></script>
+<script src="../dist/js/core/config.js"></script>
+<script src="../dist/js/data/favourites.js"></script>
 <script src="../assets/qrcode.js"></script>
+<script src="../dist/js/opensubtitles.js"></script>
 <script src="../dist/js/settings.js"></script>
 </body>
 </html>

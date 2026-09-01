@@ -7,36 +7,36 @@
 
 #home-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 36px 60px 28px;
+    padding: 2.25rem 3.75rem 1.75rem;
     flex-shrink: 0;
 }
 
 #home-brand {
-    font-size: 34px; font-weight: 700; color: var(--accent);
-    display: flex; align-items: center; gap: 14px;
+    font-size: 2.125rem; font-weight: 700; color: var(--accent);
+    display: flex; align-items: center; gap: 0.875rem;
 }
 #home-brand span { color: var(--text); }
 #home-brand small {
-    font-size: 18px; font-weight: 400; color: var(--text-dim);
+    font-size: 1.125rem; font-weight: 400; color: var(--text-dim);
 }
 
 #home-date {
-    font-size: 20px; color: var(--text-dim);
+    font-size: 1.25rem; color: var(--text-dim);
 }
 
 /* ── Tile grid ───────────────────────────────────────────────────────────────── */
 #home-grid {
     flex: 1; display: flex; align-items: center; justify-content: center;
-    gap: 40px; padding: 0 60px 60px;
+    gap: 2.5rem; padding: 0 3.75rem 3.75rem;
 }
 
 /* ── Main tile (Live TV, VOD) ────────────────────────────────────────────────── */
 .home-tile-main {
     display: flex; flex-direction: column;
     align-items: flex-start; justify-content: flex-end;
-    width: 480px; height: 340px;
+    width: 30rem; height: 21.25rem;
     background: var(--bg3); border: var(--border);
-    border-radius: 20px; padding: 32px 36px;
+    border-radius: 1.25rem; padding: 2rem 2.25rem;
     cursor: pointer; position: relative; overflow: hidden;
     transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
     flex-shrink: 0;
@@ -53,18 +53,18 @@
 }
 
 .home-tile-icon {
-    font-size: 72px; line-height: 1;
-    margin-bottom: 20px;
-    position: absolute; top: 28px; left: 36px;
+    font-size: 4.5rem; line-height: 1;
+    margin-bottom: 1.25rem;
+    position: absolute; top: 1.75rem; left: 2.25rem;
     opacity: 0.9;
 }
 .home-tile-label {
-    font-size: 32px; font-weight: 700; color: var(--text);
-    position: absolute; bottom: 32px; left: 36px;
+    font-size: 2rem; font-weight: 700; color: var(--text);
+    position: absolute; bottom: 2rem; left: 2.25rem;
 }
 .home-tile-sub {
-    font-size: 17px; color: var(--text-dim);
-    position: absolute; bottom: 10px; left: 36px;
+    font-size: 1.0625rem; color: var(--text-dim);
+    position: absolute; bottom: 0.625rem; left: 2.25rem;
 }
 
 /* Live TV tile — accent red gradient */
@@ -92,16 +92,16 @@
 /* ── Sub-tile column ─────────────────────────────────────────────────────────── */
 .home-tile-col {
     display: flex; flex-direction: column;
-    gap: 24px;
+    gap: 1.5rem;
 }
 
 /* ── Small tile (Catchup, Settings) ─────────────────────────────────────────── */
 .home-tile-small {
     display: flex; align-items: center;
-    gap: 22px;
-    width: 320px; height: 148px;
+    gap: 1.375rem;
+    width: 20rem; height: 9.25rem;
     background: var(--bg3); border: var(--border);
-    border-radius: 16px; padding: 0 28px;
+    border-radius: 1rem; padding: 0 1.75rem;
     cursor: pointer; position: relative; overflow: hidden;
     transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
     flex-shrink: 0;
@@ -118,15 +118,15 @@
 }
 
 .home-tile-small .home-tile-icon {
-    position: static; font-size: 44px; opacity: 0.85;
+    position: static; font-size: 2.75rem; opacity: 0.85;
     margin-bottom: 0; flex-shrink: 0;
 }
-.home-tile-small-text { display: flex; flex-direction: column; gap: 4px; }
+.home-tile-small-text { display: flex; flex-direction: column; gap: 0.25rem; }
 .home-tile-small .home-tile-label {
-    position: static; font-size: 24px;
+    position: static; font-size: 1.5rem;
 }
 .home-tile-small .home-tile-sub {
-    position: static; font-size: 15px;
+    position: static; font-size: 0.9375rem;
 }
 
 /* Catchup tile */
