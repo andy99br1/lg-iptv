@@ -33,8 +33,21 @@ var cfg = Config.resolve();
 }());
 
 function apiUrl(params)          { return Config.apiUrl(cfg, params); }
-function buildMovieUrl(id, ext)  { return Config.movieUrl(cfg, id, ext); }
-function buildEpisodeUrl(id, ext){ return Config.episodeUrl(cfg, id, ext); }
+function buildMovieUrl(id, ext) {
+    if (cfg && cfg.type === 'm3u') {
+        return m3uResolveStreamUrl(id);
+    }
+
+    return Config.movieUrl(cfg, id, ext);
+}
+
+function buildEpisodeUrl(id, ext) {
+    if (cfg && cfg.type === 'm3u') {
+        return m3uResolveStreamUrl(id);
+    }
+
+    return Config.episodeUrl(cfg, id, ext);
+}
 function cacheGet(key)           { return Store.cacheGet(key); }
 function cacheSet(key, data)     { return Store.cacheSet(key, data); }
 function fetchJSON(url)          { return Net.json(url); }

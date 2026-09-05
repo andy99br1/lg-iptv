@@ -1,176 +1,886 @@
-/* vod/rails.js — the horizontal category rows, and the section switch between
- * Movies and Series.
- *
- * Rails recycle. An IntersectionObserver fills the ones near the viewport and
- * empties the ones far from it, keeping their height so nothing jumps. Each
- * shows the first dozen titles and then hands off to the category browser,
- * because past a dozen the D-pad journey costs more than opening the category.
+/* vod/rails.js
+ * Rails de filmes e séries.
+ * Suporta Xtream e bibliotecas VOD extraídas de playlists M3U.
  */
+
 'use strict';
 
-/* ── Rails ───────────────────────────────────────────────────────── */
-/* Recycling observer: loads rails near the viewport and UNLOADS rails that
-   scroll far away (clears their cards + images but keeps the row height) so
-   the DOM/memory stay bounded no matter how many categories exist. */
-var railObserver = ('IntersectionObserver' in window)
-    ? new IntersectionObserver(function (entries) {
-        entries.forEach(function (en) {
-            if (en.isIntersecting) ensureRailLoaded(en.target);
-            else                   unloadRail(en.target);
-        });
-    }, { root: elRails, rootMargin: '900px 0px' })
-    : null;
+
+/* ──────────────────────────────────────────────────────────────
+ * Carregamento de dados
+ * ────────────────────────────────────────────────────────────── */
+
+function vodLoadItems(type, categoryId) {
+
+    /* M3U */
+    if (cfg && cfg.type === 'm3u') {
+
+        if (type === 'series') {
+            return m3uGetSeries(
+                cfg,
+                categoryId
+            );
+        }
+
+        return m3uGetVodStreams(
+            cfg,
+            categoryId
+        );
+    }
+
+
+    /* Xtream */
+    var action =
+        type === 'series'
+            ? 'get_series'
+            : 'get_vod_streams';
+
+
+    var cacheKey =
+        'vod_content_' +
+        Config.scope(cfg) +
+        '_' +
+        type +
+        '_' +
+        categoryId;
+
+
+    var url =
+        apiUrl(
+            'action=' +
+            action +
+            '&category_id=' +
+            encodeURIComponent(categoryId)
+        );
+
+
+    return fetchCached(
+        cacheKey,
+        url
+    );
+}
+
+
+
+function vodLoadCategories(type) {
+
+    /* M3U */
+    if (cfg && cfg.type === 'm3u') {
+
+        if (type === 'series') {
+            return m3uGetSeriesCategories(cfg);
+        }
+
+        return m3uGetVodCategories(cfg);
+    }
+
+
+    /* Xtream */
+    var action =
+        type === 'series'
+            ? 'get_series_categories'
+            : 'get_vod_categories';
+
+
+    var cacheKey =
+        (
+            type === 'series'
+                ? 'vod_cats_series_'
+                : 'vod_cats_movie_'
+        ) +
+        Config.scope(cfg);
+
+
+    return fetchCached(
+        cacheKey,
+        apiUrl(
+            'action=' + action
+        )
+    );
+}
+
+
+
+/* ──────────────────────────────────────────────────────────────
+ * Rail recycling
+ * ────────────────────────────────────────────────────────────── */
+
+var railObserver =
+    ('IntersectionObserver' in window)
+
+        ? new IntersectionObserver(
+            function (entries) {
+
+                entries.forEach(
+                    function (entry) {
+
+                        if (entry.isIntersecting) {
+                            ensureRailLoaded(
+                                entry.target
+                            );
+                        }
+
+                        else {
+                            unloadRail(
+                                entry.target
+                            );
+                        }
+
+                    }
+                );
+
+            },
+
+            {
+                root: elRails,
+                rootMargin: '900px 0px'
+            }
+        )
+
+        : null;
+
+
 
 function unloadRail(rail) {
-    if (!rail || rail.dataset.loaded !== '1' || rail.dataset.keep === '1') return;
-    var rails = railEls();
-    if (rails[railIndex] === rail) return;          // never unload the focused rail
-    var track = rail.querySelector('.vod-rail-track');
+
+    if (!rail) {
+        return;
+    }
+
+
+    if (rail.dataset.loaded !== '1') {
+        return;
+    }
+
+
+    if (rail.dataset.keep === '1') {
+        return;
+    }
+
+
+    var rails =
+        railEls();
+
+
+    if (rails[railIndex] === rail) {
+        return;
+    }
+
+
+    var track =
+        rail.querySelector(
+            '.vod-rail-track'
+        );
+
+
     if (track) {
-        if (imgObserver) track.querySelectorAll('img[data-src]').forEach(function (img) { imgObserver.unobserve(img); });
+
+        if (imgObserver) {
+
+            var images =
+                track.querySelectorAll(
+                    'img[data-src]'
+                );
+
+
+            Array.prototype.forEach.call(
+                images,
+                function (img) {
+                    imgObserver.unobserve(img);
+                }
+            );
+        }
+
+
         track.innerHTML = '';
     }
+
+
     rail.dataset.loaded = '0';
 }
 
-function makeRail(titleText, type, catId) {
-    var rail = document.createElement('section');
-    rail.className = 'vod-rail';
-    rail.dataset.type = type || '';
-    rail.dataset.catId = catId == null ? '' : catId;
-    rail.dataset.loaded = '0';
 
-    var h = document.createElement('h2');
-    h.className = 'vod-rail-title';
-    h.textContent = titleText;
-    rail.appendChild(h);
 
-    var track = document.createElement('div');
-    track.className = 'vod-rail-track';
-    rail.appendChild(track);
+/* ──────────────────────────────────────────────────────────────
+ * Criação do rail
+ * ────────────────────────────────────────────────────────────── */
+
+function makeRail(
+    titleText,
+    type,
+    categoryId
+) {
+
+    var rail =
+        document.createElement(
+            'section'
+        );
+
+
+    rail.className =
+        'vod-rail';
+
+
+    rail.dataset.type =
+        type || '';
+
+
+    rail.dataset.catId =
+        categoryId == null
+            ? ''
+            : categoryId;
+
+
+    rail.dataset.loaded =
+        '0';
+
+
+
+    var title =
+        document.createElement(
+            'h2'
+        );
+
+
+    title.className =
+        'vod-rail-title';
+
+
+    title.textContent =
+        titleText;
+
+
+    rail.appendChild(
+        title
+    );
+
+
+
+    var track =
+        document.createElement(
+            'div'
+        );
+
+
+    track.className =
+        'vod-rail-track';
+
+
+    rail.appendChild(
+        track
+    );
+
+
     return rail;
 }
 
-function fillRail(rail) {
-    if (rail.dataset.loaded !== '0') return;
-    rail.dataset.loaded = '1';
-    var type = rail.dataset.type, catId = rail.dataset.catId;
-    var track = rail.querySelector('.vod-rail-track');
-    var action = type === 'series' ? 'get_series' : 'get_vod_streams';
-    var ck = 'vod_content_' + Config.scope(cfg) + '_' + type + '_' + catId;
-    var url = apiUrl('action=' + action + '&category_id=' + encodeURIComponent(catId));
 
-    // skeleton shimmer while loading
-    for (var s = 0; s < 6; s++) { var sk = document.createElement('div'); sk.className = 'vod-card vod-skeleton'; track.appendChild(sk); }
 
-    fetchCached(ck, url).then(function (data) {
-        track.innerHTML = '';
-        var items = Array.isArray(data) ? data : [];
-        if (!items.length) { rail.parentNode && rail.parentNode.removeChild(rail); return; }
-        var n = Math.min(items.length, RAIL_CAP);
-        var frag = document.createDocumentFragment();
-        for (var i = 0; i < n; i++) frag.appendChild(makeCard(items[i], type));
-        /* Only worth offering when it leads somewhere new — a category of
-           exactly 12 would give a "see all" that shows the same 12. */
-        if (items.length > n) {
-            frag.appendChild(makeMoreCard(rail.querySelector('.vod-rail-title').textContent,
-                                          type, catId, items.length));
-        }
-        track.appendChild(frag);
-        /* If the user is already sitting on this rail, paint focus now that
-           cards exist (lazy load may finish after they navigated here). */
-        if (zone === 'rails' && railEls()[railIndex] === rail) paintRailFocus();
-    }).catch(function () {
-        rail.parentNode && rail.parentNode.removeChild(rail);
-    });
+/* ──────────────────────────────────────────────────────────────
+ * Skeleton
+ * ────────────────────────────────────────────────────────────── */
+
+function vodRailSkeleton(track) {
+
+    for (var i = 0; i < 6; i++) {
+
+        var skeleton =
+            document.createElement(
+                'div'
+            );
+
+
+        skeleton.className =
+            'vod-card vod-skeleton';
+
+
+        track.appendChild(
+            skeleton
+        );
+    }
 }
 
+
+
+/* ──────────────────────────────────────────────────────────────
+ * Carregar conteúdo de um rail
+ * ────────────────────────────────────────────────────────────── */
+
+function fillRail(rail) {
+
+    if (!rail) {
+        return;
+    }
+
+
+    if (rail.dataset.loaded !== '0') {
+        return;
+    }
+
+
+    rail.dataset.loaded = '1';
+
+
+
+    var type =
+        rail.dataset.type;
+
+
+    var categoryId =
+        rail.dataset.catId;
+
+
+    var track =
+        rail.querySelector(
+            '.vod-rail-track'
+        );
+
+
+    if (!track) {
+        return;
+    }
+
+
+
+    vodRailSkeleton(
+        track
+    );
+
+
+
+    vodLoadItems(
+        type,
+        categoryId
+    )
+
+        .then(
+            function (data) {
+
+                track.innerHTML =
+                    '';
+
+
+                var items =
+                    Array.isArray(data)
+                        ? data
+                        : [];
+
+
+                if (!items.length) {
+
+                    if (rail.parentNode) {
+                        rail.parentNode.removeChild(
+                            rail
+                        );
+                    }
+
+                    return;
+                }
+
+
+
+                var amount =
+                    Math.min(
+                        items.length,
+                        RAIL_CAP
+                    );
+
+
+                var fragment =
+                    document.createDocumentFragment();
+
+
+
+                for (
+                    var i = 0;
+                    i < amount;
+                    i++
+                ) {
+
+                    fragment.appendChild(
+                        makeCard(
+                            items[i],
+                            type
+                        )
+                    );
+                }
+
+
+
+                if (
+                    items.length >
+                    amount
+                ) {
+
+                    var title =
+                        rail.querySelector(
+                            '.vod-rail-title'
+                        );
+
+
+                    fragment.appendChild(
+                        makeMoreCard(
+                            title
+                                ? title.textContent
+                                : '',
+                            type,
+                            categoryId,
+                            items.length
+                        )
+                    );
+                }
+
+
+
+                track.appendChild(
+                    fragment
+                );
+
+
+
+                var rails =
+                    railEls();
+
+
+                if (
+                    zone === 'rails' &&
+                    rails[railIndex] === rail
+                ) {
+                    paintRailFocus();
+                }
+
+            }
+        )
+
+        .catch(
+            function (err) {
+
+                console.error(
+                    'VOD rail load failed:',
+                    err
+                );
+
+
+                if (rail.parentNode) {
+                    rail.parentNode.removeChild(
+                        rail
+                    );
+                }
+
+            }
+        );
+}
+
+
+
+/* ──────────────────────────────────────────────────────────────
+ * Renderizar rails
+ * ────────────────────────────────────────────────────────────── */
+
 function renderRails() {
-    elRails.innerHTML = '';
-    railIndex = 0; cardIndex = 0;
 
-    // Continue Watching first (never recycled)
-    var cw = continueWatching();
-    if (cw.length) {
-        var cwRail = makeRail('Continue Watching', '', '');
-        cwRail.dataset.loaded = '1';
-        cwRail.dataset.keep = '1';
-        var track = cwRail.querySelector('.vod-rail-track');
-        cw.forEach(function (e) { track.appendChild(makeCard(e, 'progress')); });
-        elRails.appendChild(cwRail);
+    elRails.innerHTML =
+        '';
+
+
+    railIndex =
+        0;
+
+
+    cardIndex =
+        0;
+
+
+
+    /* Continue Watching */
+
+    var watching =
+        continueWatching();
+
+
+    if (watching.length) {
+
+        var continueRail =
+            makeRail(
+                'Continue Watching',
+                '',
+                ''
+            );
+
+
+        continueRail.dataset.loaded =
+            '1';
+
+
+        continueRail.dataset.keep =
+            '1';
+
+
+        var continueTrack =
+            continueRail.querySelector(
+                '.vod-rail-track'
+            );
+
+
+        watching.forEach(
+            function (entry) {
+
+                continueTrack.appendChild(
+                    makeCard(
+                        entry,
+                        'progress'
+                    )
+                );
+
+            }
+        );
+
+
+        elRails.appendChild(
+            continueRail
+        );
     }
 
-    // My List (saved titles, both types)
-    var wl = loadWatchlist();
-    if (wl.length) {
-        var wlRail = makeRail('My List', '', '');
-        wlRail.dataset.loaded = '1';
-        wlRail.dataset.keep = '1';
-        var wtrack = wlRail.querySelector('.vod-rail-track');
-        wl.forEach(function (e) { wtrack.appendChild(makeCard(e, e.__type)); });
-        elRails.appendChild(wlRail);
+
+
+    /* My List */
+
+    var watchlist =
+        loadWatchlist();
+
+
+    if (watchlist.length) {
+
+        var listRail =
+            makeRail(
+                'My List',
+                '',
+                ''
+            );
+
+
+        listRail.dataset.loaded =
+            '1';
+
+
+        listRail.dataset.keep =
+            '1';
+
+
+        var listTrack =
+            listRail.querySelector(
+                '.vod-rail-track'
+            );
+
+
+        watchlist.forEach(
+            function (entry) {
+
+                listTrack.appendChild(
+                    makeCard(
+                        entry,
+                        entry.__type
+                    )
+                );
+
+            }
+        );
+
+
+        elRails.appendChild(
+            listRail
+        );
     }
 
-    /* Starred categories float to the top, in the order they were starred,
-       and keep their star in the title so it's obvious why they're there
-       and how to undo it. Everything else follows in the provider's order.
-       This is the whole payoff of favouriting a category on a TV: the two
-       rails you actually watch are the first thing on screen instead of
-       being 30 rails down. */
-    var visible = (cats[activeType] || []).filter(function (c) {
-        return !hidden[activeType].has(String(c.category_id));
-    });
-    var favIds = Favourites.categories(activeType);
-    var list = visible.slice().sort(function (a, b) {
-        var ia = favIds.indexOf(String(a.category_id));
-        var ib = favIds.indexOf(String(b.category_id));
-        if (ia === ib) return 0;
-        if (ia === -1) return 1;
-        if (ib === -1) return -1;
-        return ia - ib;
-    });
 
-    list.forEach(function (c, i) {
-        var isFavCat = Favourites.isCategory(activeType, c.category_id);
-        var rail = makeRail((isFavCat ? '★  ' : '') + (c.category_name || 'Unnamed'),
-                            activeType, c.category_id);
-        elRails.appendChild(rail);
-        if (railObserver) {
-            railObserver.observe(rail);            // observer handles load + unload
-            if (i < 2) fillRail(rail);             // eager top rails for instant paint
-        } else {
-            fillRail(rail);                        // no IO (old WebOS) → load all
+
+    /* Categorias */
+
+    var allCategories =
+        cats[activeType] || [];
+
+
+    var visible =
+        allCategories.filter(
+            function (category) {
+
+                return !hidden[
+                    activeType
+                ].has(
+                    String(
+                        category.category_id
+                    )
+                );
+
+            }
+        );
+
+
+
+    /* Favoritas primeiro */
+
+    var favouriteIds =
+        Favourites.categories(
+            activeType
+        );
+
+
+    var ordered =
+        visible
+            .slice()
+            .sort(
+                function (a, b) {
+
+                    var aIndex =
+                        favouriteIds.indexOf(
+                            String(
+                                a.category_id
+                            )
+                        );
+
+
+                    var bIndex =
+                        favouriteIds.indexOf(
+                            String(
+                                b.category_id
+                            )
+                        );
+
+
+                    if (
+                        aIndex ===
+                        bIndex
+                    ) {
+                        return 0;
+                    }
+
+
+                    if (aIndex === -1) {
+                        return 1;
+                    }
+
+
+                    if (bIndex === -1) {
+                        return -1;
+                    }
+
+
+                    return (
+                        aIndex -
+                        bIndex
+                    );
+                }
+            );
+
+
+
+    ordered.forEach(
+        function (category, index) {
+
+            var favourite =
+                Favourites.isCategory(
+                    activeType,
+                    category.category_id
+                );
+
+
+            var categoryName =
+                category.category_name ||
+                'Unnamed';
+
+
+            if (favourite) {
+                categoryName =
+                    '★  ' +
+                    categoryName;
+            }
+
+
+
+            var rail =
+                makeRail(
+                    categoryName,
+                    activeType,
+                    category.category_id
+                );
+
+
+            elRails.appendChild(
+                rail
+            );
+
+
+
+            if (railObserver) {
+
+                railObserver.observe(
+                    rail
+                );
+
+
+                /*
+                 * Carrega imediatamente
+                 * as duas primeiras categorias.
+                 */
+
+                if (index < 2) {
+                    fillRail(
+                        rail
+                    );
+                }
+            }
+
+            else {
+
+                /*
+                 * TVs antigas sem
+                 * IntersectionObserver.
+                 */
+
+                fillRail(
+                    rail
+                );
+            }
+
         }
-    });
+    );
 
-    if (!list.length && !cw.length) showStatus('Nothing here yet.', false);
-    else hideStatus();
-    renderSidebarCats();    /* keep the sidebar category list in sync */
-    /* After a (re)render from boot or a section switch, drop focus into the
-       rails. Otherwise leave focus where it is (e.g. sidebar open). */
-    if (_focusRailsAfterRender) {
-        _focusRailsAfterRender = false;
-        focusZone('rails');
+
+
+    if (
+        !ordered.length &&
+        !watching.length
+    ) {
+
+        showStatus(
+            'Nothing here yet.',
+            false
+        );
+    }
+
+    else {
+        hideStatus();
+    }
+
+
+
+    renderSidebarCats();
+
+
+
+    if (
+        _focusRailsAfterRender
+    ) {
+
+        _focusRailsAfterRender =
+            false;
+
+
+        focusZone(
+            'rails'
+        );
+
+
         paintRailFocus();
     }
 }
 
-/* ── Category load + section switch ──────────────────────────────── */
+
+
+/* ──────────────────────────────────────────────────────────────
+ * Trocar Movies / Series
+ * ────────────────────────────────────────────────────────────── */
+
 function loadType(type) {
-    activeType = type;
-    document.querySelectorAll('.vod-nav-item').forEach(function (t) {
-        if (t.dataset.action === 'movie' || t.dataset.action === 'series')
-            t.classList.toggle('active', t.dataset.action === type);
-    });
-    if (cats[type]) { renderRails(); return; }
-    showStatus('Loading…', true);
-    var action = type === 'series' ? 'get_series_categories' : 'get_vod_categories';
-    var ck = (type === 'series' ? 'vod_cats_series_' : 'vod_cats_movie_') + Config.scope(cfg);
-    fetchCached(ck, apiUrl('action=' + action)).then(function (data) {
-        cats[type] = Array.isArray(data) ? data : [];
+
+    activeType =
+        type;
+
+
+
+    var navigation =
+        document.querySelectorAll(
+            '.vod-nav-item'
+        );
+
+
+    Array.prototype.forEach.call(
+        navigation,
+        function (item) {
+
+            if (
+                item.dataset.action === 'movie' ||
+                item.dataset.action === 'series'
+            ) {
+
+                item.classList.toggle(
+                    'active',
+                    item.dataset.action === type
+                );
+            }
+
+        }
+    );
+
+
+
+    /*
+     * Se já carregamos as categorias,
+     * apenas redesenha a tela.
+     */
+
+    if (cats[type]) {
+
         renderRails();
-    }).catch(function () {
-        cats[type] = [];
-        showStatus('Could not load categories.', false);
-    });
+
+        return;
+    }
+
+
+
+    showStatus(
+        'Loading…',
+        true
+    );
+
+
+
+    vodLoadCategories(
+        type
+    )
+
+        .then(
+            function (data) {
+
+                cats[type] =
+                    Array.isArray(data)
+                        ? data
+                        : [];
+
+
+                renderRails();
+
+            }
+        )
+
+        .catch(
+            function (err) {
+
+                console.error(
+                    'VOD category load failed:',
+                    err
+                );
+
+
+                cats[type] =
+                    [];
+
+
+                showStatus(
+                    'Could not load categories.',
+                    false
+                );
+
+            }
+        );
 }

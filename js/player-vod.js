@@ -125,7 +125,7 @@
         if (!e) return;
         var cfg = Config.resolve();
         if (!cfg) return;
-        var nextUrl = Config.episodeUrl(cfg, e.id, e.ext);
+        var nextUrl = e.url || Config.episodeUrl(cfg, e.id, e.ext);
         var name = (base.series_name ? base.series_name + ' · ' : '') + e.title;
 
         var token = _playToken();
