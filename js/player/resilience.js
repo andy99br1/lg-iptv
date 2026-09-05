@@ -7,9 +7,10 @@
  * behaviour, codecs, audio/subtitle handling and engine selection intact.
  *
  * What it adds for the MAIN Live TV player:
- *   - ~12 s intentional reserve on seekable HLS live streams
- *   - larger single-stream HLS buffer
- *   - more tolerant HLS network retries
+ *   - HLS.js FIRST for real .m3u8 Live TV streams (Native remains fallback)
+ *   - intentional initial prebuffer on HLS.js
+ *   - ~15 s live reserve when the HLS window allows it
+ *   - larger single-stream HLS buffer and more tolerant retries
  *   - continuous stall detection after playback has already started
  *   - soft recovery first, then automatic same-engine reconnect
  *
@@ -25,8 +26,12 @@
     }
 
     var CFG = {
-        safetyDelaySec: 12,
-        minimumReserveSec: 8,
+        safetyDelaySec: 15,
+        minimumReserveSec: 10,
+
+        prebufferTargetSec: 15,
+        prebufferMaxWaitMs: 8000,
+        prebufferCheckMs: 250,
 
         monitorEveryMs: 1000,
         softStallMs: 4000,
@@ -35,7 +40,7 @@
 
         reconnectDelayMs: 700,
 
-        maxBufferLength: 36,
+        maxBufferLength: 42,
         maxMaxBufferLength: 60,
         backBufferLength: 30,
 
@@ -96,6 +101,27 @@
         return /\.m3u8(?:$|[?#])/i.test(
             currentUrl(self)
         );
+    }
+
+
+    function isMainLiveChannel(self) {
+        return !!(
+            self &&
+            !self._lightBuffer &&
+            self._contentKey &&
+            String(self._contentKey).indexOf('ch:') === 0
+        );
+    }
+
+
+    function currentKind(self) {
+        var attempt =
+            currentAttempt(self);
+
+        return (
+            attempt &&
+            attempt.kind
+        ) || '';
     }
 
 
@@ -441,6 +467,155 @@
         };
 
 
+
+    /* ─────────────────────────────────────────────────────────────
+     * HLS.js initial prebuffer
+     * ───────────────────────────────────────────────────────────── */
+
+    P._resStartPrebuffer =
+        function (done) {
+            done =
+                done ||
+                function () {};
+
+            if (
+                !isMainLiveChannel(this) ||
+                currentKind(this) !== 'hls' ||
+                !this.hls ||
+                !this.video
+            ) {
+                done();
+                return;
+            }
+
+            var key =
+                String(this._contentKey) +
+                '|' +
+                currentUrl(this);
+
+            /*
+             * Do this once for each channel/tier start. Reconnects may run it
+             * again because rebuilding a reserve after a server hiccup is useful.
+             */
+            this._resPrebufferKey =
+                key;
+
+            var self =
+                this;
+
+            var v =
+                this.video;
+
+            var started =
+                Date.now();
+
+            try {
+                v.pause();
+            }
+
+            catch (e) {}
+
+            try {
+                this._msg(
+                    'Building live buffer…'
+                );
+            }
+
+            catch (e) {}
+
+            this._resDiag(
+                'initial HLS prebuffer'
+            );
+
+            function finish() {
+                if (
+                    self._resPrebufferTimer
+                ) {
+                    clearTimeout(
+                        self._resPrebufferTimer
+                    );
+
+                    self._resPrebufferTimer =
+                        null;
+                }
+
+                /*
+                 * If a seekable live window exists, use it to make the reserve
+                 * deterministic. If not, the pause itself still accumulated
+                 * buffered media ahead of currentTime.
+                 */
+                self._resApplySafetyDelay();
+
+                try {
+                    v.play()
+                        .catch(
+                            function () {}
+                        );
+                }
+
+                catch (e) {}
+
+                try {
+                    self._hideMsg();
+                }
+
+                catch (e) {}
+
+                self._playingSince =
+                    Date.now();
+
+                done();
+            }
+
+
+            function check() {
+                if (
+                    !self.video ||
+                    !self.hls ||
+                    currentKind(self) !== 'hls'
+                ) {
+                    finish();
+                    return;
+                }
+
+                var ahead =
+                    bufferAhead(self);
+
+                var waited =
+                    Date.now() -
+                    started;
+
+                if (
+                    ahead >=
+                        CFG.prebufferTargetSec ||
+                    waited >=
+                        CFG.prebufferMaxWaitMs
+                ) {
+                    self._resDiag(
+                        'prebuffer ready ' +
+                        ahead.toFixed(1) +
+                        's'
+                    );
+
+                    finish();
+                    return;
+                }
+
+                self._resPrebufferTimer =
+                    setTimeout(
+                        check,
+                        CFG.prebufferCheckMs
+                    );
+            }
+
+            this._resPrebufferTimer =
+                setTimeout(
+                    check,
+                    CFG.prebufferCheckMs
+                );
+        };
+
+
     /* ─────────────────────────────────────────────────────────────
      * Continuous stall monitor
      * ───────────────────────────────────────────────────────────── */
@@ -498,6 +673,17 @@
                 );
 
                 this._resDelayTimer =
+                    null;
+            }
+
+            if (
+                this._resPrebufferTimer
+            ) {
+                clearTimeout(
+                    this._resPrebufferTimer
+                );
+
+                this._resPrebufferTimer =
                     null;
             }
         };
@@ -857,6 +1043,76 @@
         };
 
 
+
+    /* ─────────────────────────────────────────────────────────────
+     * Prefer HLS.js for actual .m3u8 Live TV channels
+     * ───────────────────────────────────────────────────────────── */
+
+    var originalBuildAttempts =
+        P._buildAttempts;
+
+    if (originalBuildAttempts) {
+        P._buildAttempts =
+            function (urls) {
+                var list =
+                    originalBuildAttempts.call(
+                        this,
+                        urls
+                    );
+
+                /*
+                 * Do NOT change VOD, catch-up or Multiview. For the main Live TV
+                 * preview only, a real .m3u8 gets HLS.js first because that is the
+                 * tier whose buffer and retry behaviour JavaScript can control.
+                 *
+                 * Native remains in the list immediately afterwards, so CORS,
+                 * codec or MSE failures fall back automatically.
+                 */
+                if (
+                    !isMainLiveChannel(this) ||
+                    !list ||
+                    list.length < 2
+                ) {
+                    return list;
+                }
+
+                var hlsFirst = [];
+                var rest = [];
+
+                for (
+                    var i = 0;
+                    i < list.length;
+                    i++
+                ) {
+                    var a =
+                        list[i];
+
+                    if (
+                        a &&
+                        a.kind === 'hls' &&
+                        /\.m3u8(?:$|[?#])/i.test(
+                            a.url || ''
+                        )
+                    ) {
+                        hlsFirst.push(a);
+                    }
+
+                    else {
+                        rest.push(a);
+                    }
+                }
+
+                if (!hlsFirst.length) {
+                    return list;
+                }
+
+                return hlsFirst.concat(
+                    rest
+                );
+            };
+    }
+
+
     /* ─────────────────────────────────────────────────────────────
      * Patch HLS.js configuration
      * ───────────────────────────────────────────────────────────── */
@@ -931,6 +1187,17 @@
 
                     c.nudgeMaxRetry =
                         5;
+
+                    /*
+                     * Stay several HLS segments behind the live edge. Count-based
+                     * values are compatible with old hls.js builds and adapt to
+                     * providers whose segment duration is 2, 4, 5 or 6 seconds.
+                     */
+                    c.liveSyncDurationCount =
+                        4;
+
+                    c.liveMaxLatencyDurationCount =
+                        9;
                 }
 
                 return result;
@@ -957,11 +1224,29 @@
                 if (
                     !this._lightBuffer
                 ) {
+                    var self =
+                        this;
+
                     this._resRecovering =
                         false;
 
-                    this._resStartMonitor();
-                    this._resScheduleSafetyDelay();
+                    if (
+                        isMainLiveChannel(this) &&
+                        currentKind(this) === 'hls' &&
+                        this.hls
+                    ) {
+                        this._resStartPrebuffer(
+                            function () {
+                                self._resStartMonitor();
+                                self._resScheduleSafetyDelay();
+                            }
+                        );
+                    }
+
+                    else {
+                        this._resStartMonitor();
+                        this._resScheduleSafetyDelay();
+                    }
                 }
 
                 return result;
