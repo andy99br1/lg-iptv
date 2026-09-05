@@ -71,6 +71,26 @@
         nativePrebufferCheckMs: 250,
         nativePrebufferMinUsefulSec: 1.0,
 
+        /*
+         * Reconnects should come back fast. The first channel open builds a big
+         * cushion; after a real failure we only wait for a small reserve.
+         */
+        recoveryPrebufferTargetSec: 3,
+        recoveryPrebufferMaxWaitMs: 2600,
+
+        /*
+         * Low-buffer governor. This is deliberately conservative: if Native
+         * falls close to the cliff but still has data, briefly pause before the
+         * decoder itself crashes. It cannot hide an outage longer than the
+         * available data, but it can turn some hard reconnects into a short
+         * controlled refill.
+         */
+        governorLowSec: 1.8,
+        governorTargetSec: 4.5,
+        governorMaxPauseMs: 1800,
+        governorCheckMs: 200,
+        governorCooldownMs: 10000,
+
         softStallMs: 4000,
         nudgeStallMs: 6500,
         hardStallMs: 9500,
@@ -228,10 +248,24 @@
         }
 
         try {
+            var end =
+                Number(
+                    v.buffered.end(idx)
+                );
+
+            /*
+             * Some webOS Native streams expose buffered.end() as Infinity.
+             * That is NOT a real "infinite buffer" and caused V8 to believe the
+             * startup target was instantly satisfied. Treat it as unknown/zero
+             * so the fixed-time prebuffer can do its job.
+             */
+            if (!isFinite(end)) {
+                return 0;
+            }
+
             return Math.max(
                 0,
-                v.buffered.end(idx) -
-                    t
+                end - t
             );
         }
 
@@ -733,6 +767,19 @@
             var started =
                 Date.now();
 
+            var recoveryMode =
+                !!this._resRecoveryPrebuffer;
+
+            var targetSec =
+                recoveryMode
+                    ? CFG.recoveryPrebufferTargetSec
+                    : CFG.nativePrebufferTargetSec;
+
+            var maxWaitMs =
+                recoveryMode
+                    ? CFG.recoveryPrebufferMaxWaitMs
+                    : CFG.nativePrebufferMaxWaitMs;
+
             this._resIntentionalPrebuffer =
                 true;
 
@@ -766,8 +813,17 @@
                 self._resLastNativePrebuffer =
                     ahead;
 
+                if (recoveryMode) {
+                    self._resRecoveryPrebuffer =
+                        false;
+                }
+
                 self._resDiag(
-                    'native prebuffer ' +
+                    (
+                        recoveryMode
+                            ? 'recovery prebuffer '
+                            : 'native prebuffer '
+                    ) +
                     ahead.toFixed(1) +
                     's ' +
                     reason
@@ -829,7 +885,7 @@
 
                 if (
                     ahead >=
-                    CFG.nativePrebufferTargetSec
+                    targetSec
                 ) {
                     finish(
                         'target'
@@ -840,7 +896,7 @@
 
                 if (
                     waited >=
-                    CFG.nativePrebufferMaxWaitMs
+                    maxWaitMs
                 ) {
                     /*
                      * Even if the provider only exposed 3-5 seconds, keeping
@@ -980,6 +1036,7 @@
                     isMainLiveChannel(self) &&
                     !self._resRecovering &&
                     !self._resIntentionalPrebuffer &&
+                    !self._resIntentionalGovernor &&
                     typeof document !== 'undefined' &&
                     !document.hidden
                 );
@@ -993,26 +1050,38 @@
                     return;
                 }
 
+                /*
+                 * IMPORTANT V9 FIX:
+                 *
+                 * On this provider, webOS fires "ended" at tiny rolling media
+                 * boundaries even though the live channel continues. V8 treated
+                 * every one as a fatal end and created a reconnect/prebuffer loop.
+                 *
+                 * An "ended" event now only arms the normal starvation watchdog.
+                 * We reconnect only if the stream genuinely remains empty/frozen.
+                 */
                 self._resDiag(
-                    'live media ended'
+                    'ended signal'
                 );
 
-                setTimeout(
-                    function () {
-                        if (
-                            liveStillActive() &&
-                            (
-                                self.video.ended ||
-                                self._resIsAtFiniteEnd()
-                            )
-                        ) {
-                            self._resForceReconnect(
-                                'live media ended'
-                            );
-                        }
-                    },
-                    CFG.liveEndedReconnectMs
-                );
+                if (
+                    !self._resStarvedAt
+                ) {
+                    self._resStarvedAt =
+                        Date.now();
+
+                    self._resStarvationSoftDone =
+                        false;
+                }
+
+                try {
+                    self.video.play()
+                        .catch(
+                            function () {}
+                        );
+                }
+
+                catch (e) {}
             }
 
 
@@ -1104,6 +1173,151 @@
             }
 
             catch (e) {}
+        };
+
+
+
+    /* ─────────────────────────────────────────────────────────────
+     * V9 low-buffer governor
+     * ───────────────────────────────────────────────────────────── */
+
+    P._resStopGovernor =
+        function () {
+            if (
+                this._resGovernorTimer
+            ) {
+                clearTimeout(
+                    this._resGovernorTimer
+                );
+
+                this._resGovernorTimer =
+                    null;
+            }
+
+            this._resIntentionalGovernor =
+                false;
+        };
+
+
+    P._resStartGovernor =
+        function () {
+            if (
+                !isMainLiveChannel(this) ||
+                this._lightBuffer ||
+                currentKind(this) === 'hls' ||
+                !this.video ||
+                this._resIntentionalPrebuffer ||
+                this._resIntentionalGovernor ||
+                this._resRecovering
+            ) {
+                return;
+            }
+
+            var now =
+                Date.now();
+
+            if (
+                this._resGovernorLastAt &&
+                now -
+                    this._resGovernorLastAt <
+                    CFG.governorCooldownMs
+            ) {
+                return;
+            }
+
+            var self =
+                this;
+
+            var v =
+                this.video;
+
+            var started =
+                now;
+
+            this._resGovernorLastAt =
+                now;
+
+            this._resIntentionalGovernor =
+                true;
+
+            this._resDiag(
+                'governor refill'
+            );
+
+            try {
+                v.pause();
+            }
+
+            catch (e) {}
+
+
+            function finish() {
+                self._resStopGovernor();
+
+                try {
+                    v.play()
+                        .catch(
+                            function () {}
+                        );
+                }
+
+                catch (e) {}
+
+                self._resStarvedAt =
+                    0;
+
+                self._resStarvationSoftDone =
+                    false;
+
+                self._resLastAdvanceAt =
+                    Date.now();
+
+                self._resLastTime =
+                    Number(
+                        v.currentTime
+                    ) || 0;
+            }
+
+
+            function check() {
+                if (
+                    !self.video ||
+                    self._resRecovering ||
+                    !isMainLiveChannel(self)
+                ) {
+                    self._resStopGovernor();
+                    return;
+                }
+
+                var ahead =
+                    bufferAhead(
+                        self
+                    );
+
+                if (
+                    ahead >=
+                    CFG.governorTargetSec ||
+                    Date.now() -
+                        started >=
+                        CFG.governorMaxPauseMs
+                ) {
+                    finish();
+                    return;
+                }
+
+                self._resGovernorTimer =
+                    setTimeout(
+                        check,
+                        CFG.governorCheckMs
+                    );
+            }
+
+
+            this._resGovernorTimer =
+                setTimeout(
+                    check,
+                    CFG.governorCheckMs
+                );
         };
 
 
@@ -1322,6 +1536,13 @@
             this._resRecovering =
                 true;
 
+            /*
+             * The next successful Native attempt should rebuild only a small
+             * cushion so recovery is fast, not another 7-10 second wait.
+             */
+            this._resRecoveryPrebuffer =
+                true;
+
             this._resStopMonitor();
 
             this._resDiag(
@@ -1448,7 +1669,8 @@
                         }
 
                         if (
-                            self._resIntentionalPrebuffer
+                            self._resIntentionalPrebuffer ||
+                            self._resIntentionalGovernor
                         ) {
                             self._resLastAdvanceAt =
                                 Date.now();
@@ -1484,24 +1706,6 @@
                             self.video;
 
                         /*
-                         * V7: a Live TV stream that reaches a finite "end"
-                         * (for example 4.5 / 4.5 seconds) must reconnect.
-                         * Previously video.ended was excluded from starvation
-                         * recovery, which exactly matches the 1080p freeze seen
-                         * in testing.
-                         */
-                        if (
-                            video.ended ||
-                            self._resIsAtFiniteEnd()
-                        ) {
-                            self._resForceReconnect(
-                                'live stream reached finite end'
-                            );
-
-                            return;
-                        }
-
-                        /*
                          * Buffer starvation is checked BEFORE video.paused.
                          *
                          * On LG webOS Native, a network underrun may flip
@@ -1513,6 +1717,22 @@
                             bufferAhead(
                                 self
                             );
+
+                        if (
+                            aheadNow >
+                                CFG.starvationThresholdSec &&
+                            aheadNow <=
+                                CFG.governorLowSec &&
+                            !video.paused
+                        ) {
+                            self._resStartGovernor();
+
+                            if (
+                                self._resIntentionalGovernor
+                            ) {
+                                return;
+                            }
+                        }
 
                         if (
                             aheadNow <=
@@ -1999,6 +2219,7 @@
                 this._resStopMonitor();
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
+                this._resStopGovernor();
 
                 this._resNativePrebufferDoneKey =
                     '';
@@ -2026,7 +2247,11 @@
                 this._resStopMonitor();
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
+                this._resStopGovernor();
                 this._resRecovering =
+                    false;
+
+                this._resRecoveryPrebuffer =
                     false;
 
                 return originalStop.apply(
@@ -2046,6 +2271,7 @@
                 this._resStopMonitor();
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
+                this._resStopGovernor();
                 this._resRecovering =
                     false;
 
@@ -2129,7 +2355,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v8' +
+                        '\nresilient: ON v9' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -2163,11 +2389,6 @@
                                 : ''
                         ) +
                         (
-                            this._resIsAtFiniteEnd()
-                                ? '  liveEnd=yes'
-                                : ''
-                        ) +
-                        (
                             isFinite(
                                 Number(
                                     this._resLastNativePrebuffer
@@ -2178,6 +2399,16 @@
                                       this._resLastNativePrebuffer
                                   ).toFixed(1) +
                                   's'
+                                : ''
+                        ) +
+                        (
+                            this._resIntentionalGovernor
+                                ? '  governor=refill'
+                                : ''
+                        ) +
+                        (
+                            this._resRecoveryPrebuffer
+                                ? '  recovery=fast'
                                 : ''
                         );
 
