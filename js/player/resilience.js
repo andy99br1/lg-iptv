@@ -7,12 +7,12 @@
  * behaviour, codecs, audio/subtitle handling and engine selection intact.
  *
  * What it adds for the MAIN Live TV player:
- *   - HLS.js FIRST whenever the original engine offers an HLS attempt
+ *   - HLS.js FIRST; if the engine offers none, V4 adds a safe synthetic HLS probe
  *   - intentional initial prebuffer on HLS.js
  *   - ~15 s live reserve when the HLS window allows it
  *   - larger single-stream HLS buffer and more tolerant retries
  *   - continuous stall detection after playback has already started
- *   - soft recovery first, then automatic same-engine reconnect
+ *   - direct zero-buffer watchdog plus automatic same-engine reconnect
  *
  * Multiview players use opts.lightBuffer and are deliberately left alone so
  * four simultaneous streams do not exhaust TV memory.
@@ -34,6 +34,18 @@
         prebufferCheckMs: 250,
 
         monitorEveryMs: 1000,
+
+        /*
+         * Direct buffer-starvation watchdog.
+         * This is separate from currentTime stall detection because webOS Native
+         * can report video.paused=true when its buffer reaches zero. Older V4
+         * treated that as an intentional pause and therefore never reconnected.
+         */
+        starvationThresholdSec: 0.35,
+        starvationResetSec: 1.25,
+        starvationSoftMs: 1200,
+        starvationReconnectMs: 3200,
+
         softStallMs: 4000,
         nudgeStallMs: 6500,
         hardStallMs: 9500,
@@ -689,6 +701,17 @@
                 this._resPrebufferTimer =
                     null;
             }
+
+            if (
+                this._resHlsProbeTimer
+            ) {
+                clearTimeout(
+                    this._resHlsProbeTimer
+                );
+
+                this._resHlsProbeTimer =
+                    null;
+            }
         };
 
 
@@ -917,6 +940,12 @@
             this._resLastReserveCheck =
                 0;
 
+            this._resStarvedAt =
+                0;
+
+            this._resStarvationSoftDone =
+                false;
+
             this._resMonitor =
                 setInterval(
                     function () {
@@ -950,6 +979,96 @@
                         var video =
                             self.video;
 
+                        /*
+                         * V5: buffer starvation is checked BEFORE video.paused.
+                         *
+                         * On LG webOS Native, a network underrun may flip
+                         * video.paused to true even though the user never paused.
+                         * V4 returned immediately in that state, so ahead=0.0s
+                         * could remain frozen forever.
+                         */
+                        var aheadNow =
+                            bufferAhead(
+                                self
+                            );
+
+                        var playAge =
+                            Date.now() -
+                            Number(
+                                self._playingSince ||
+                                Date.now()
+                            );
+
+                        if (
+                            !video.ended &&
+                            playAge > 2500 &&
+                            aheadNow <=
+                                CFG.starvationThresholdSec
+                        ) {
+                            if (
+                                !self._resStarvedAt
+                            ) {
+                                self._resStarvedAt =
+                                    Date.now();
+
+                                self._resStarvationSoftDone =
+                                    false;
+
+                                self._resDiag(
+                                    'buffer empty'
+                                );
+                            }
+
+                            var starvationMs =
+                                Date.now() -
+                                self._resStarvedAt;
+
+                            if (
+                                starvationMs >=
+                                    CFG.starvationSoftMs &&
+                                !self._resStarvationSoftDone
+                            ) {
+                                self._resStarvationSoftDone =
+                                    true;
+
+                                self._resSoftRecover(
+                                    starvationMs
+                                );
+                            }
+
+                            if (
+                                starvationMs >=
+                                    CFG.starvationReconnectMs
+                            ) {
+                                self._resForceReconnect(
+                                    'reconnect after buffer empty ' +
+                                    Math.round(
+                                        starvationMs /
+                                        1000
+                                    ) +
+                                    's'
+                                );
+
+                                return;
+                            }
+                        }
+
+                        else if (
+                            aheadNow >=
+                                CFG.starvationResetSec
+                        ) {
+                            self._resStarvedAt =
+                                0;
+
+                            self._resStarvationSoftDone =
+                                false;
+                        }
+
+                        /*
+                         * A real pause with healthy buffered media should not
+                         * trigger the normal frozen-currentTime watchdog.
+                         * Buffer-empty pause was already handled above.
+                         */
                         if (
                             video.paused ||
                             video.ended
@@ -993,6 +1112,17 @@
 
                             self._resNudgeDone =
                                 false;
+
+                            if (
+                                aheadNow >=
+                                    CFG.starvationResetSec
+                            ) {
+                                self._resStarvedAt =
+                                    0;
+
+                                self._resStarvationSoftDone =
+                                    false;
+                            }
 
                             self._resMaintainReserve();
 
@@ -1048,8 +1178,48 @@
 
 
     /* ─────────────────────────────────────────────────────────────
-     * Prefer HLS.js whenever the ORIGINAL engine offers HLS
+     * Prefer HLS.js; synthesize a probe when the engine offers none
      * ───────────────────────────────────────────────────────────── */
+
+    function _resLooksProbeableLiveUrl(url) {
+        url =
+            String(url || '');
+
+        if (!/^https?:\/\//i.test(url)) {
+            return false;
+        }
+
+        /*
+         * Do not waste time trying to parse obvious VOD/direct-file formats
+         * as an HLS manifest. Extensionless IPTV live endpoints are exactly
+         * what V4 is aimed at.
+         */
+        if (
+            /\.(mp4|mkv|avi|mov|m4v|webm|mp3|aac|flac|jpg|jpeg|png)(?:$|[?#])/i
+                .test(url)
+        ) {
+            return false;
+        }
+
+        return true;
+    }
+
+
+    function _resAttemptLabel(a) {
+        if (!a) {
+            return '?';
+        }
+
+        if (
+            a.kind === 'hls' &&
+            a._resSyntheticHls
+        ) {
+            return 'hls*';
+        }
+
+        return a.kind || '?';
+    }
+
 
     var originalBuildAttempts =
         P._buildAttempts;
@@ -1063,21 +1233,6 @@
                         urls
                     );
 
-                /*
-                 * V3:
-                 *
-                 * Many IPTV servers expose HLS behind URLs that do NOT end in
-                 * ".m3u8" (for example /live/user/pass/12345).
-                 *
-                 * So we no longer inspect the URL extension here.
-                 *
-                 * If LG-IPTV's ORIGINAL engine already created an attempt whose
-                 * kind is "hls", trust that classification and move HLS.js to the
-                 * front for the MAIN Live TV player.
-                 *
-                 * Native stays in the attempt list as automatic fallback if
-                 * HLS.js fails because of CORS, codec, MSE or provider behaviour.
-                 */
                 if (
                     !isMainLiveChannel(this) ||
                     !list ||
@@ -1109,23 +1264,116 @@
                     }
                 }
 
+                /*
+                 * This is the important V4 path.
+                 *
+                 * The user's diagnostics showed:
+                 *   attempts: native  selected=native
+                 *
+                 * So the original engine was never offering HLS at all.
+                 *
+                 * For extensionless/probeable Live TV URLs, prepend ONE HLS.js
+                 * attempt using the exact same URL. If the endpoint really
+                 * returns an HLS manifest, HLS.js gets full buffer control.
+                 *
+                 * If it is actually raw MPEG-TS, CORS-blocked, invalid HLS, etc.,
+                 * the probe is intentionally short-lived and Native is next.
+                 */
+                if (!hlsFirst.length) {
+                    var probeUrl = '';
+
+                    for (
+                        var j = 0;
+                        j < list.length;
+                        j++
+                    ) {
+                        var candidate =
+                            list[j];
+
+                        if (
+                            candidate &&
+                            candidate.url &&
+                            _resLooksProbeableLiveUrl(
+                                candidate.url
+                            )
+                        ) {
+                            probeUrl =
+                                candidate.url;
+
+                            break;
+                        }
+                    }
+
+                    if (!probeUrl) {
+                        /*
+                         * Some engine versions pass the URL separately and the
+                         * attempt object may not retain it. Reuse the original
+                         * URL list as a fallback source.
+                         */
+                        if (
+                            urls &&
+                            urls.length
+                        ) {
+                            for (
+                                var u = 0;
+                                u < urls.length;
+                                u++
+                            ) {
+                                var raw =
+                                    typeof urls[u] === 'string'
+                                        ? urls[u]
+                                        : (
+                                            urls[u] &&
+                                            (
+                                                urls[u].url ||
+                                                urls[u].stream_url
+                                            )
+                                        );
+
+                                if (
+                                    _resLooksProbeableLiveUrl(
+                                        raw
+                                    )
+                                ) {
+                                    probeUrl =
+                                        raw;
+
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (probeUrl) {
+                        hlsFirst.push({
+                            kind:
+                                'hls',
+
+                            url:
+                                probeUrl,
+
+                            _resSyntheticHls:
+                                true
+                        });
+
+                        this._resSyntheticHlsOffered =
+                            true;
+                    }
+
+                    else {
+                        this._resSyntheticHlsOffered =
+                            false;
+                    }
+                }
+
                 var reordered =
                     hlsFirst.length
                         ? hlsFirst.concat(rest)
                         : list;
 
-                /*
-                 * Save exactly what the engine offered after reordering.
-                 * The GREEN diagnostics panel will expose this.
-                 */
                 this._resAttemptSummary =
                     reordered.map(
-                        function (a) {
-                            return (
-                                a &&
-                                a.kind
-                            ) || '?';
-                        }
+                        _resAttemptLabel
                     ).join(
                         ' > '
                     );
@@ -1156,6 +1404,85 @@
                         tok,
                         url
                     );
+
+                var activeAttempt =
+                    currentAttempt(this);
+
+                var isSyntheticProbe =
+                    !!(
+                        activeAttempt &&
+                        activeAttempt.kind === 'hls' &&
+                        activeAttempt._resSyntheticHls
+                    );
+
+                if (
+                    isSyntheticProbe &&
+                    !this._lightBuffer
+                ) {
+                    if (
+                        this._resHlsProbeTimer
+                    ) {
+                        clearTimeout(
+                            this._resHlsProbeTimer
+                        );
+                    }
+
+                    var self =
+                        this;
+
+                    var probeGen =
+                        gen;
+
+                    var probeTok =
+                        tok;
+
+                    /*
+                     * Do not let a raw-TS/non-HLS endpoint add a long delay to
+                     * channel zapping. If HLS.js has not reached playing within
+                     * ~4.5 s, advance to the original Native attempt.
+                     */
+                    this._resHlsProbeTimer =
+                        setTimeout(
+                            function () {
+                                self._resHlsProbeTimer =
+                                    null;
+
+                                if (
+                                    probeGen !== self._gen ||
+                                    probeTok !== self._tok ||
+                                    self._playingSince
+                                ) {
+                                    return;
+                                }
+
+                                var still =
+                                    currentAttempt(
+                                        self
+                                    );
+
+                                if (
+                                    !still ||
+                                    !still._resSyntheticHls
+                                ) {
+                                    return;
+                                }
+
+                                self._resDiag(
+                                    'synthetic HLS probe timeout'
+                                );
+
+                                try {
+                                    self._next(
+                                        probeGen,
+                                        'HLS probe timeout'
+                                    );
+                                }
+
+                                catch (e) {}
+                            },
+                            4500
+                        );
+                }
 
                 /*
                  * The original method creates Hls synchronously and only
@@ -1242,6 +1569,17 @@
                         this,
                         arguments
                     );
+
+                if (
+                    this._resHlsProbeTimer
+                ) {
+                    clearTimeout(
+                        this._resHlsProbeTimer
+                    );
+
+                    this._resHlsProbeTimer =
+                        null;
+                }
 
                 if (
                     !this._lightBuffer
@@ -1400,7 +1738,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v3' +
+                        '\nresilient: ON v5' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -1414,7 +1752,25 @@
                         '\nattempts: ' +
                         attempts +
                         '  selected=' +
-                        selected;
+                        selected +
+                        (
+                            this._resSyntheticHlsOffered
+                                ? '  synthetic=yes'
+                                : '  synthetic=no'
+                        ) +
+                        (
+                            this._resStarvedAt
+                                ? '  starved=' +
+                                  (
+                                      (
+                                          Date.now() -
+                                          this._resStarvedAt
+                                      ) /
+                                      1000
+                                  ).toFixed(1) +
+                                  's'
+                                : ''
+                        );
 
                     this._diagEl.textContent +=
                         extra;
