@@ -43,9 +43,16 @@
          * Some webOS builds flip paused=true and clear internal playing state
          * when the network buffer reaches zero.
          */
-        starvationThresholdSec: 0.35,
-        starvationResetSec: 1.25,
-        starvationSoftMs: 800,
+        starvationThresholdSec: 0.80,
+        starvationResetSec: 1.50,
+        starvationSoftMs: 700,
+
+        /*
+         * Absolute failsafe independent of paused/currentTime/governor state.
+         * Once a genuine waiting/stalled/empty condition is armed, we never
+         * allow the player to sit frozen forever.
+         */
+        starvationFailsafeMs: 6000,
 
         /*
          * Some IPTV endpoints are exposed by webOS Native as tiny finite media
@@ -758,9 +765,11 @@
             startupTarget =
                 Math.min(
                     startupTarget,
-                    capacity *
-                        0.98 +
-                        0.5
+                    Math.max(
+                        3.5,
+                        capacity *
+                            0.95
+                    )
                 );
 
             var startupMinimum =
@@ -788,9 +797,11 @@
             recoveryTarget =
                 Math.min(
                     recoveryTarget,
-                    capacity *
-                        0.90 +
-                        0.4
+                    Math.max(
+                        3.2,
+                        capacity *
+                            0.82
+                    )
                 );
 
             var recoveryMinimum =
@@ -828,9 +839,11 @@
             governorTarget =
                 Math.min(
                     governorTarget,
-                    capacity *
-                        0.95 +
-                        0.5
+                    Math.max(
+                        3.2,
+                        capacity *
+                            0.88
+                    )
                 );
 
             var governorMinimum =
@@ -1722,27 +1735,25 @@
                 }
 
                 /*
-                 * IMPORTANT V9 FIX:
+                 * V12: IGNORE "ended" as a failure signal on Live TV.
                  *
-                 * On this provider, webOS fires "ended" at tiny rolling media
-                 * boundaries even though the live channel continues. V8 treated
-                 * every one as a fatal end and created a reconnect/prebuffer loop.
-                 *
-                 * An "ended" event now only arms the normal starvation watchdog.
-                 * We reconnect only if the stream genuinely remains empty/frozen.
+                 * The 1080p provider fires ended repeatedly at rolling native
+                 * media boundaries even while the stream is conceptually live.
+                 * The real failure signals we trust are:
+                 *   waiting / stalled / emptied / low ahead / frozen currentTime.
                  */
-                self._resDiag(
-                    'ended signal'
-                );
-
                 if (
-                    !self._resStarvedAt
+                    !self._resLastEndedDiagAt ||
+                    Date.now() -
+                        self._resLastEndedDiagAt >
+                        10000
                 ) {
-                    self._resStarvedAt =
-                        Date.now();
+                    self._resDiag(
+                        'ended signal ignored'
+                    );
 
-                    self._resStarvationSoftDone =
-                        false;
+                    self._resLastEndedDiagAt =
+                        Date.now();
                 }
 
                 try {
@@ -1779,18 +1790,23 @@
                  * The interval watchdog will give the server ~2.2 s to recover.
                  */
                 if (
-                    (
-                        !_resAheadKnown(ahead) ||
-                        ahead <=
-                            CFG.starvationThresholdSec
-                    ) &&
-                    !self._resStarvedAt
+                    !_resAheadKnown(ahead) ||
+                    ahead <=
+                        CFG.starvationResetSec
                 ) {
-                    self._resStarvedAt =
-                        Date.now();
+                    if (
+                        !self._resStarvedAt
+                    ) {
+                        self._resStarvedAt =
+                            Date.now();
 
-                    self._resStarvationSoftDone =
-                        false;
+                        self._resStarvationSoftDone =
+                            false;
+                    }
+
+                    self._resArmStarvationFailsafe(
+                        name
+                    );
                 }
             }
 
@@ -2135,6 +2151,112 @@
         };
 
 
+
+    /* ─────────────────────────────────────────────────────────────
+     * V12 absolute starvation failsafe
+     * ───────────────────────────────────────────────────────────── */
+
+    P._resClearStarvationFailsafe =
+        function () {
+            if (
+                this._resStarvationFailsafeTimer
+            ) {
+                clearTimeout(
+                    this._resStarvationFailsafeTimer
+                );
+
+                this._resStarvationFailsafeTimer =
+                    null;
+            }
+        };
+
+
+    P._resArmStarvationFailsafe =
+        function (reason) {
+            if (
+                this._resRecovering ||
+                this._lightBuffer ||
+                !isMainLiveChannel(this)
+            ) {
+                return;
+            }
+
+            if (
+                this._resStarvationFailsafeTimer
+            ) {
+                return;
+            }
+
+            var self =
+                this;
+
+            var gen =
+                this._gen;
+
+            var startedAt =
+                Date.now();
+
+            this._resDiag(
+                'failsafe armed' +
+                (
+                    reason
+                        ? ' ' + reason
+                        : ''
+                )
+            );
+
+            this._resStarvationFailsafeTimer =
+                setTimeout(
+                    function () {
+                        self._resStarvationFailsafeTimer =
+                            null;
+
+                        if (
+                            self._resRecovering ||
+                            self._lightBuffer ||
+                            !isMainLiveChannel(self) ||
+                            gen !== self._gen
+                        ) {
+                            return;
+                        }
+
+                        var ahead =
+                            bufferAhead(
+                                self
+                            );
+
+                        /*
+                         * Cancel if a healthy cushion came back.
+                         */
+                        if (
+                            _resAheadKnown(ahead) &&
+                            ahead >=
+                                CFG.starvationResetSec
+                        ) {
+                            return;
+                        }
+
+                        self._resDiag(
+                            'failsafe reconnect after ' +
+                            (
+                                (
+                                    Date.now() -
+                                    startedAt
+                                ) /
+                                1000
+                            ).toFixed(1) +
+                            's'
+                        );
+
+                        self._resForceReconnect(
+                            'starvation failsafe'
+                        );
+                    },
+                    CFG.starvationFailsafeMs
+                );
+        };
+
+
     /* ─────────────────────────────────────────────────────────────
      * Continuous stall monitor
      * ───────────────────────────────────────────────────────────── */
@@ -2363,6 +2485,7 @@
             this._resRecoveryPrebuffer =
                 true;
 
+            this._resClearStarvationFailsafe();
             this._resStopMonitor();
 
             this._resDiag(
@@ -2581,9 +2704,13 @@
                                     false;
 
                                 self._resDiag(
-                                    'buffer empty'
+                                    'buffer critical'
                                 );
                             }
+
+                            self._resArmStarvationFailsafe(
+                                'low-ahead'
+                            );
 
                             var starvationMs =
                                 Date.now() -
@@ -2645,6 +2772,8 @@
 
                             self._resStarvationSoftDone =
                                 false;
+
+                            self._resClearStarvationFailsafe();
                         }
 
                         /*
@@ -3071,6 +3200,7 @@
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
                 this._resStopGovernor();
+                this._resClearStarvationFailsafe();
 
                 this._resNativePrebufferDoneKey =
                     '';
@@ -3099,6 +3229,7 @@
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
                 this._resStopGovernor();
+                this._resClearStarvationFailsafe();
                 this._resRecovering =
                     false;
 
@@ -3123,6 +3254,7 @@
                 this._resUnbindVideoEvents();
                 this._resStopNativePrebuffer();
                 this._resStopGovernor();
+                this._resClearStarvationFailsafe();
                 this._resRecovering =
                     false;
 
@@ -3206,7 +3338,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v11' +
+                        '\nresilient: ON v12' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -3282,7 +3414,12 @@
                                 );
                             }(this)
                         ) +
-                        '  policy=adaptive';
+                        (
+                            this._resStarvationFailsafeTimer
+                                ? '  failsafe=armed'
+                                : ''
+                        ) +
+                        '  policy=adaptive-v12';
 
                     this._diagEl.textContent +=
                         extra;
