@@ -29,22 +29,24 @@
         safetyDelaySec: 15,
         minimumReserveSec: 10,
 
-        prebufferTargetSec: 15,
-        prebufferMaxWaitMs: 8000,
+        prebufferTargetSec: 12,
+        prebufferMinimumSec: 6,
+        prebufferMaxWaitMs: 12000,
         prebufferCheckMs: 250,
 
-        monitorEveryMs: 1000,
+        monitorEveryMs: 500,
 
         /*
          * Direct buffer-starvation watchdog.
-         * This is separate from currentTime stall detection because webOS Native
-         * can report video.paused=true when its buffer reaches zero. Older V4
-         * treated that as an intentional pause and therefore never reconnected.
+         *
+         * V6 deliberately does NOT depend on video.paused or _playingSince.
+         * Some webOS builds flip paused=true and clear internal playing state
+         * when the network buffer reaches zero.
          */
         starvationThresholdSec: 0.35,
         starvationResetSec: 1.25,
-        starvationSoftMs: 1200,
-        starvationReconnectMs: 3200,
+        starvationSoftMs: 800,
+        starvationReconnectMs: 2200,
 
         softStallMs: 4000,
         nudgeStallMs: 6500,
@@ -602,12 +604,73 @@
 
                 if (
                     ahead >=
-                        CFG.prebufferTargetSec ||
-                    waited >=
-                        CFG.prebufferMaxWaitMs
+                    CFG.prebufferTargetSec
                 ) {
                     self._resDiag(
                         'prebuffer ready ' +
+                        ahead.toFixed(1) +
+                        's'
+                    );
+
+                    finish();
+                    return;
+                }
+
+                if (
+                    waited >=
+                    CFG.prebufferMaxWaitMs
+                ) {
+                    var activeAttempt =
+                        currentAttempt(self);
+
+                    var synthetic =
+                        !!(
+                            activeAttempt &&
+                            activeAttempt._resSyntheticHls
+                        );
+
+                    /*
+                     * Adaptive V6 rule:
+                     * If the synthetic HLS probe cannot build even a modest
+                     * reserve, do not start playback with 1–2 seconds of data.
+                     * Abandon HLS and advance to Native instead.
+                     */
+                    if (
+                        synthetic &&
+                        ahead <
+                        CFG.prebufferMinimumSec
+                    ) {
+                        self._resDiag(
+                            'synthetic HLS rejected: prebuffer ' +
+                            ahead.toFixed(1) +
+                            's'
+                        );
+
+                        if (
+                            self._resPrebufferTimer
+                        ) {
+                            clearTimeout(
+                                self._resPrebufferTimer
+                            );
+
+                            self._resPrebufferTimer =
+                                null;
+                        }
+
+                        try {
+                            self._next(
+                                self._gen,
+                                'HLS prebuffer too small'
+                            );
+                        }
+
+                        catch (e) {}
+
+                        return;
+                    }
+
+                    self._resDiag(
+                        'prebuffer max wait ' +
                         ahead.toFixed(1) +
                         's'
                     );
@@ -813,6 +876,50 @@
         };
 
 
+    P._resHandleStarvation =
+        function (reason) {
+            var attempt =
+                currentAttempt(this);
+
+            /*
+             * Synthetic HLS was only a probe. If it actually reaches zero
+             * buffer during playback, stop insisting on the same weak path and
+             * immediately advance to the original Native fallback.
+             */
+            if (
+                attempt &&
+                attempt.kind === 'hls' &&
+                attempt._resSyntheticHls
+            ) {
+                this._resDiag(
+                    'synthetic HLS starved -> Native'
+                );
+
+                this._resStopMonitor();
+
+                try {
+                    this._next(
+                        this._gen,
+                        reason ||
+                        'synthetic HLS starved'
+                    );
+                }
+
+                catch (e) {}
+
+                return;
+            }
+
+            /*
+             * Native (or a real/original HLS attempt) gets a clean reconnect
+             * of the same engine/stream.
+             */
+            this._resForceReconnect(
+                reason
+            );
+        };
+
+
     P._resForceReconnect =
         function (reason) {
             if (
@@ -951,7 +1058,7 @@
                     function () {
                         if (
                             !self.video ||
-                            !self._playingSince ||
+                            !self._resEverPlayed ||
                             self._resRecovering
                         ) {
                             return;
@@ -992,16 +1099,8 @@
                                 self
                             );
 
-                        var playAge =
-                            Date.now() -
-                            Number(
-                                self._playingSince ||
-                                Date.now()
-                            );
-
                         if (
                             !video.ended &&
-                            playAge > 2500 &&
                             aheadNow <=
                                 CFG.starvationThresholdSec
                         ) {
@@ -1038,10 +1137,10 @@
 
                             if (
                                 starvationMs >=
-                                    CFG.starvationReconnectMs
+                                CFG.starvationReconnectMs
                             ) {
-                                self._resForceReconnect(
-                                    'reconnect after buffer empty ' +
+                                self._resHandleStarvation(
+                                    'buffer empty ' +
                                     Math.round(
                                         starvationMs /
                                         1000
@@ -1570,6 +1669,12 @@
                         arguments
                     );
 
+                this._resEverPlayed =
+                    true;
+
+                this._resAttemptStartedAt =
+                    Date.now();
+
                 if (
                     this._resHlsProbeTimer
                 ) {
@@ -1621,6 +1726,12 @@
         P._resetVideo =
             function () {
                 this._resStopMonitor();
+
+                this._resEverPlayed =
+                    false;
+
+                this._resAttemptStartedAt =
+                    0;
 
                 return originalResetVideo.apply(
                     this,
@@ -1738,7 +1849,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v5' +
+                        '\nresilient: ON v6' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -1770,6 +1881,12 @@
                                   ).toFixed(1) +
                                   's'
                                 : ''
+                        ) +
+                        (
+                            currentAttempt(this) &&
+                            currentAttempt(this)._resSyntheticHls
+                                ? '  adaptive=probe'
+                                : '  adaptive=stable'
                         );
 
                     this._diagEl.textContent +=
