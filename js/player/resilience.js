@@ -7,7 +7,7 @@
  * behaviour, codecs, audio/subtitle handling and engine selection intact.
  *
  * What it adds for the MAIN Live TV player:
- *   - HLS.js FIRST; if the engine offers none, V4 adds a safe synthetic HLS probe
+ *   - keep the original engine choice (Native first when the app prefers it)
  *   - intentional initial prebuffer on HLS.js
  *   - ~15 s live reserve when the HLS window allows it
  *   - larger single-stream HLS buffer and more tolerant retries
@@ -47,6 +47,29 @@
         starvationResetSec: 1.25,
         starvationSoftMs: 800,
         starvationReconnectMs: 2200,
+
+        /*
+         * Some IPTV endpoints are exposed by webOS Native as tiny finite media
+         * objects (e.g. currentTime 4.5 / duration 4.5). For Live TV, reaching
+         * the end is never a legitimate final state: reload automatically.
+         */
+        liveEndedReconnectMs: 350,
+        finiteEndToleranceSec: 0.18,
+
+        /*
+         * V8 restores the intentional startup reserve for Native.
+         * Native does not give us a reliable live-edge/seekable position on
+         * this provider, so instead of seeking 10-15 s behind live, we briefly
+         * PAUSE after first playback and let the browser accumulate data ahead.
+         *
+         * If the stream can build 10 s quickly, playback starts immediately
+         * when that target is reached. Otherwise we wait at most 7 s and use
+         * whatever reserve the provider actually allowed us to accumulate.
+         */
+        nativePrebufferTargetSec: 10,
+        nativePrebufferMaxWaitMs: 7000,
+        nativePrebufferCheckMs: 250,
+        nativePrebufferMinUsefulSec: 1.0,
 
         softStallMs: 4000,
         nudgeStallMs: 6500,
@@ -620,55 +643,6 @@
                     waited >=
                     CFG.prebufferMaxWaitMs
                 ) {
-                    var activeAttempt =
-                        currentAttempt(self);
-
-                    var synthetic =
-                        !!(
-                            activeAttempt &&
-                            activeAttempt._resSyntheticHls
-                        );
-
-                    /*
-                     * Adaptive V6 rule:
-                     * If the synthetic HLS probe cannot build even a modest
-                     * reserve, do not start playback with 1–2 seconds of data.
-                     * Abandon HLS and advance to Native instead.
-                     */
-                    if (
-                        synthetic &&
-                        ahead <
-                        CFG.prebufferMinimumSec
-                    ) {
-                        self._resDiag(
-                            'synthetic HLS rejected: prebuffer ' +
-                            ahead.toFixed(1) +
-                            's'
-                        );
-
-                        if (
-                            self._resPrebufferTimer
-                        ) {
-                            clearTimeout(
-                                self._resPrebufferTimer
-                            );
-
-                            self._resPrebufferTimer =
-                                null;
-                        }
-
-                        try {
-                            self._next(
-                                self._gen,
-                                'HLS prebuffer too small'
-                            );
-                        }
-
-                        catch (e) {}
-
-                        return;
-                    }
-
                     self._resDiag(
                         'prebuffer max wait ' +
                         ahead.toFixed(1) +
@@ -691,6 +665,445 @@
                     check,
                     CFG.prebufferCheckMs
                 );
+        };
+
+
+
+
+    /* ─────────────────────────────────────────────────────────────
+     * V8 Native startup prebuffer
+     * ───────────────────────────────────────────────────────────── */
+
+    P._resStopNativePrebuffer =
+        function () {
+            if (
+                this._resNativePrebufferTimer
+            ) {
+                clearTimeout(
+                    this._resNativePrebufferTimer
+                );
+
+                this._resNativePrebufferTimer =
+                    null;
+            }
+
+            this._resIntentionalPrebuffer =
+                false;
+        };
+
+
+    P._resStartNativePrebuffer =
+        function () {
+            if (
+                !isMainLiveChannel(this) ||
+                this._lightBuffer ||
+                currentKind(this) === 'hls' ||
+                !this.video
+            ) {
+                return;
+            }
+
+            /*
+             * _onPlaying fires again when the intentional pause finishes.
+             * Prebuffer only once per engine attempt.
+             */
+            var attemptKey =
+                String(this._gen) +
+                ':' +
+                String(this._attemptIdx);
+
+            if (
+                this._resNativePrebufferDoneKey ===
+                attemptKey
+            ) {
+                return;
+            }
+
+            this._resNativePrebufferDoneKey =
+                attemptKey;
+
+            this._resStopNativePrebuffer();
+
+            var self =
+                this;
+
+            var v =
+                this.video;
+
+            var started =
+                Date.now();
+
+            this._resIntentionalPrebuffer =
+                true;
+
+            this._resDiag(
+                'native startup prebuffer'
+            );
+
+            try {
+                this._msg(
+                    'Building live buffer…'
+                );
+            }
+
+            catch (e) {}
+
+            try {
+                v.pause();
+            }
+
+            catch (e) {}
+
+
+            function finish(reason) {
+                self._resStopNativePrebuffer();
+
+                var ahead =
+                    bufferAhead(
+                        self
+                    );
+
+                self._resLastNativePrebuffer =
+                    ahead;
+
+                self._resDiag(
+                    'native prebuffer ' +
+                    ahead.toFixed(1) +
+                    's ' +
+                    reason
+                );
+
+                try {
+                    v.play()
+                        .catch(
+                            function () {}
+                        );
+                }
+
+                catch (e) {}
+
+                try {
+                    self._hideMsg();
+                }
+
+                catch (e) {}
+
+                /*
+                 * Reset starvation clocks so the intentional pause is never
+                 * mistaken for a real outage when playback resumes.
+                 */
+                self._resStarvedAt =
+                    0;
+
+                self._resStarvationSoftDone =
+                    false;
+
+                self._resLastAdvanceAt =
+                    Date.now();
+
+                self._resLastTime =
+                    Number(
+                        v.currentTime
+                    ) || 0;
+            }
+
+
+            function check() {
+                if (
+                    !self.video ||
+                    self._resRecovering ||
+                    !isMainLiveChannel(self)
+                ) {
+                    self._resStopNativePrebuffer();
+                    return;
+                }
+
+                var ahead =
+                    bufferAhead(
+                        self
+                    );
+
+                var waited =
+                    Date.now() -
+                    started;
+
+                if (
+                    ahead >=
+                    CFG.nativePrebufferTargetSec
+                ) {
+                    finish(
+                        'target'
+                    );
+
+                    return;
+                }
+
+                if (
+                    waited >=
+                    CFG.nativePrebufferMaxWaitMs
+                ) {
+                    /*
+                     * Even if the provider only exposed 3-5 seconds, keeping
+                     * that small reserve is still better than starting at 0.
+                     */
+                    finish(
+                        ahead >=
+                            CFG.nativePrebufferMinUsefulSec
+                                ? 'max-wait'
+                                : 'provider-limited'
+                    );
+
+                    return;
+                }
+
+                self._resNativePrebufferTimer =
+                    setTimeout(
+                        check,
+                        CFG.nativePrebufferCheckMs
+                    );
+            }
+
+
+            this._resNativePrebufferTimer =
+                setTimeout(
+                    check,
+                    CFG.nativePrebufferCheckMs
+                );
+        };
+
+
+    /* ─────────────────────────────────────────────────────────────
+     * Live end / native underrun events
+     * ───────────────────────────────────────────────────────────── */
+
+    P._resIsAtFiniteEnd =
+        function () {
+            var v =
+                this.video;
+
+            if (!v) {
+                return false;
+            }
+
+            var duration =
+                Number(
+                    v.duration
+                );
+
+            var current =
+                Number(
+                    v.currentTime
+                );
+
+            if (
+                !isFinite(duration) ||
+                !isFinite(current) ||
+                duration <= 0
+            ) {
+                return false;
+            }
+
+            return (
+                duration -
+                current
+            ) <=
+            CFG.finiteEndToleranceSec;
+        };
+
+
+    P._resUnbindVideoEvents =
+        function () {
+            var v =
+                this.video;
+
+            var h =
+                this._resVideoHandlers;
+
+            if (
+                !v ||
+                !h
+            ) {
+                this._resVideoHandlers =
+                    null;
+
+                return;
+            }
+
+            try {
+                v.removeEventListener(
+                    'ended',
+                    h.ended
+                );
+
+                v.removeEventListener(
+                    'emptied',
+                    h.emptied
+                );
+
+                v.removeEventListener(
+                    'stalled',
+                    h.stalled
+                );
+
+                v.removeEventListener(
+                    'waiting',
+                    h.waiting
+                );
+            }
+
+            catch (e) {}
+
+            this._resVideoHandlers =
+                null;
+        };
+
+
+    P._resBindVideoEvents =
+        function () {
+            var self =
+                this;
+
+            var v =
+                this.video;
+
+            if (
+                !v ||
+                this._lightBuffer
+            ) {
+                return;
+            }
+
+            this._resUnbindVideoEvents();
+
+            function liveStillActive() {
+                return !!(
+                    isMainLiveChannel(self) &&
+                    !self._resRecovering &&
+                    !self._resIntentionalPrebuffer &&
+                    typeof document !== 'undefined' &&
+                    !document.hidden
+                );
+            }
+
+
+            function ended() {
+                if (
+                    !liveStillActive()
+                ) {
+                    return;
+                }
+
+                self._resDiag(
+                    'live media ended'
+                );
+
+                setTimeout(
+                    function () {
+                        if (
+                            liveStillActive() &&
+                            (
+                                self.video.ended ||
+                                self._resIsAtFiniteEnd()
+                            )
+                        ) {
+                            self._resForceReconnect(
+                                'live media ended'
+                            );
+                        }
+                    },
+                    CFG.liveEndedReconnectMs
+                );
+            }
+
+
+            function emptyish(name) {
+                if (
+                    !liveStillActive()
+                ) {
+                    return;
+                }
+
+                var ahead =
+                    bufferAhead(
+                        self
+                    );
+
+                self._resDiag(
+                    name +
+                    ' ahead=' +
+                    ahead.toFixed(1)
+                );
+
+                /*
+                 * Do not reconnect immediately on a single waiting event.
+                 * The interval watchdog will give the server ~2.2 s to recover.
+                 */
+                if (
+                    ahead <=
+                    CFG.starvationThresholdSec &&
+                    !self._resStarvedAt
+                ) {
+                    self._resStarvedAt =
+                        Date.now();
+
+                    self._resStarvationSoftDone =
+                        false;
+                }
+            }
+
+
+            var handlers = {
+                ended:
+                    ended,
+
+                emptied:
+                    function () {
+                        emptyish(
+                            'emptied'
+                        );
+                    },
+
+                stalled:
+                    function () {
+                        emptyish(
+                            'stalled'
+                        );
+                    },
+
+                waiting:
+                    function () {
+                        emptyish(
+                            'waiting'
+                        );
+                    }
+            };
+
+            this._resVideoHandlers =
+                handlers;
+
+            try {
+                v.addEventListener(
+                    'ended',
+                    handlers.ended
+                );
+
+                v.addEventListener(
+                    'emptied',
+                    handlers.emptied
+                );
+
+                v.addEventListener(
+                    'stalled',
+                    handlers.stalled
+                );
+
+                v.addEventListener(
+                    'waiting',
+                    handlers.waiting
+                );
+            }
+
+            catch (e) {}
         };
 
 
@@ -878,41 +1291,11 @@
 
     P._resHandleStarvation =
         function (reason) {
-            var attempt =
-                currentAttempt(this);
-
             /*
-             * Synthetic HLS was only a probe. If it actually reaches zero
-             * buffer during playback, stop insisting on the same weak path and
-             * immediately advance to the original Native fallback.
-             */
-            if (
-                attempt &&
-                attempt.kind === 'hls' &&
-                attempt._resSyntheticHls
-            ) {
-                this._resDiag(
-                    'synthetic HLS starved -> Native'
-                );
-
-                this._resStopMonitor();
-
-                try {
-                    this._next(
-                        this._gen,
-                        reason ||
-                        'synthetic HLS starved'
-                    );
-                }
-
-                catch (e) {}
-
-                return;
-            }
-
-            /*
-             * Native (or a real/original HLS attempt) gets a clean reconnect
-             * of the same engine/stream.
+             * V7: reconnect the CURRENT chosen engine.
+             *
+             * We no longer force synthetic HLS, so there is no artificial
+             * HLS->Native branch here. Native gets a clean same-stream reload.
              */
             this._resForceReconnect(
                 reason
@@ -1064,6 +1447,20 @@
                             return;
                         }
 
+                        if (
+                            self._resIntentionalPrebuffer
+                        ) {
+                            self._resLastAdvanceAt =
+                                Date.now();
+
+                            self._resLastTime =
+                                Number(
+                                    self.video.currentTime
+                                ) || 0;
+
+                            return;
+                        }
+
                         /*
                          * Do not call a backgrounded/hidden app a stall.
                          */
@@ -1087,7 +1484,25 @@
                             self.video;
 
                         /*
-                         * V5: buffer starvation is checked BEFORE video.paused.
+                         * V7: a Live TV stream that reaches a finite "end"
+                         * (for example 4.5 / 4.5 seconds) must reconnect.
+                         * Previously video.ended was excluded from starvation
+                         * recovery, which exactly matches the 1080p freeze seen
+                         * in testing.
+                         */
+                        if (
+                            video.ended ||
+                            self._resIsAtFiniteEnd()
+                        ) {
+                            self._resForceReconnect(
+                                'live stream reached finite end'
+                            );
+
+                            return;
+                        }
+
+                        /*
+                         * Buffer starvation is checked BEFORE video.paused.
                          *
                          * On LG webOS Native, a network underrun may flip
                          * video.paused to true even though the user never paused.
@@ -1100,7 +1515,6 @@
                             );
 
                         if (
-                            !video.ended &&
                             aheadNow <=
                                 CFG.starvationThresholdSec
                         ) {
@@ -1277,43 +1691,12 @@
 
 
     /* ─────────────────────────────────────────────────────────────
-     * Prefer HLS.js; synthesize a probe when the engine offers none
+     * V7: preserve the ORIGINAL engine ordering
      * ───────────────────────────────────────────────────────────── */
-
-    function _resLooksProbeableLiveUrl(url) {
-        url =
-            String(url || '');
-
-        if (!/^https?:\/\//i.test(url)) {
-            return false;
-        }
-
-        /*
-         * Do not waste time trying to parse obvious VOD/direct-file formats
-         * as an HLS manifest. Extensionless IPTV live endpoints are exactly
-         * what V4 is aimed at.
-         */
-        if (
-            /\.(mp4|mkv|avi|mov|m4v|webm|mp3|aac|flac|jpg|jpeg|png)(?:$|[?#])/i
-                .test(url)
-        ) {
-            return false;
-        }
-
-        return true;
-    }
-
 
     function _resAttemptLabel(a) {
         if (!a) {
             return '?';
-        }
-
-        if (
-            a.kind === 'hls' &&
-            a._resSyntheticHls
-        ) {
-            return 'hls*';
         }
 
         return a.kind || '?';
@@ -1332,152 +1715,35 @@
                         urls
                     );
 
-                if (
-                    !isMainLiveChannel(this) ||
-                    !list ||
-                    !list.length
-                ) {
-                    return list;
-                }
-
-                var hlsFirst = [];
-                var rest = [];
-
-                for (
-                    var i = 0;
-                    i < list.length;
-                    i++
-                ) {
-                    var a =
-                        list[i];
-
-                    if (
-                        a &&
-                        a.kind === 'hls'
-                    ) {
-                        hlsFirst.push(a);
-                    }
-
-                    else {
-                        rest.push(a);
-                    }
-                }
-
                 /*
-                 * This is the important V4 path.
+                 * Real-world test on this provider:
                  *
-                 * The user's diagnostics showed:
-                 *   attempts: native  selected=native
+                 * Native  -> commonly held ~10 s ahead
+                 * forced synthetic HLS -> often only ~0–2 s ahead
                  *
-                 * So the original engine was never offering HLS at all.
+                 * So V7 stops forcing HLS. We keep the engine's original
+                 * ordering and concentrate on making Native recover reliably.
                  *
-                 * For extensionless/probeable Live TV URLs, prepend ONE HLS.js
-                 * attempt using the exact same URL. If the endpoint really
-                 * returns an HLS manifest, HLS.js gets full buffer control.
-                 *
-                 * If it is actually raw MPEG-TS, CORS-blocked, invalid HLS, etc.,
-                 * the probe is intentionally short-lived and Native is next.
+                 * If the original engine itself offers/chooses HLS for a stream,
+                 * the HLS buffer/retry patches later in this file still apply.
                  */
-                if (!hlsFirst.length) {
-                    var probeUrl = '';
-
-                    for (
-                        var j = 0;
-                        j < list.length;
-                        j++
-                    ) {
-                        var candidate =
-                            list[j];
-
-                        if (
-                            candidate &&
-                            candidate.url &&
-                            _resLooksProbeableLiveUrl(
-                                candidate.url
-                            )
-                        ) {
-                            probeUrl =
-                                candidate.url;
-
-                            break;
-                        }
-                    }
-
-                    if (!probeUrl) {
-                        /*
-                         * Some engine versions pass the URL separately and the
-                         * attempt object may not retain it. Reuse the original
-                         * URL list as a fallback source.
-                         */
-                        if (
-                            urls &&
-                            urls.length
-                        ) {
-                            for (
-                                var u = 0;
-                                u < urls.length;
-                                u++
-                            ) {
-                                var raw =
-                                    typeof urls[u] === 'string'
-                                        ? urls[u]
-                                        : (
-                                            urls[u] &&
-                                            (
-                                                urls[u].url ||
-                                                urls[u].stream_url
-                                            )
-                                        );
-
-                                if (
-                                    _resLooksProbeableLiveUrl(
-                                        raw
-                                    )
-                                ) {
-                                    probeUrl =
-                                        raw;
-
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (probeUrl) {
-                        hlsFirst.push({
-                            kind:
-                                'hls',
-
-                            url:
-                                probeUrl,
-
-                            _resSyntheticHls:
-                                true
-                        });
-
-                        this._resSyntheticHlsOffered =
-                            true;
-                    }
-
-                    else {
-                        this._resSyntheticHlsOffered =
-                            false;
-                    }
+                if (
+                    isMainLiveChannel(this) &&
+                    list &&
+                    list.length
+                ) {
+                    this._resAttemptSummary =
+                        list.map(
+                            _resAttemptLabel
+                        ).join(
+                            ' > '
+                        );
                 }
 
-                var reordered =
-                    hlsFirst.length
-                        ? hlsFirst.concat(rest)
-                        : list;
+                this._resSyntheticHlsOffered =
+                    false;
 
-                this._resAttemptSummary =
-                    reordered.map(
-                        _resAttemptLabel
-                    ).join(
-                        ' > '
-                    );
-
-                return reordered;
+                return list;
             };
     }
 
@@ -1689,28 +1955,33 @@
                 if (
                     !this._lightBuffer
                 ) {
-                    var self =
-                        this;
-
                     this._resRecovering =
                         false;
 
+                    /*
+                     * Start protection immediately. Do NOT wait for any HLS
+                     * prebuffer callback before the watchdog exists.
+                     */
+                    this._resBindVideoEvents();
+                    this._resStartMonitor();
+
+                    /*
+                     * HLS can still use the live-edge safety delay when the
+                     * browser exposes it. Native instead gets a real startup
+                     * prebuffer by pausing briefly and accumulating ahead.
+                     */
                     if (
                         isMainLiveChannel(this) &&
                         currentKind(this) === 'hls' &&
                         this.hls
                     ) {
-                        this._resStartPrebuffer(
-                            function () {
-                                self._resStartMonitor();
-                                self._resScheduleSafetyDelay();
-                            }
-                        );
+                        this._resScheduleSafetyDelay();
                     }
 
-                    else {
-                        this._resStartMonitor();
-                        this._resScheduleSafetyDelay();
+                    else if (
+                        isMainLiveChannel(this)
+                    ) {
+                        this._resStartNativePrebuffer();
                     }
                 }
 
@@ -1726,6 +1997,11 @@
         P._resetVideo =
             function () {
                 this._resStopMonitor();
+                this._resUnbindVideoEvents();
+                this._resStopNativePrebuffer();
+
+                this._resNativePrebufferDoneKey =
+                    '';
 
                 this._resEverPlayed =
                     false;
@@ -1748,6 +2024,8 @@
         P.stop =
             function () {
                 this._resStopMonitor();
+                this._resUnbindVideoEvents();
+                this._resStopNativePrebuffer();
                 this._resRecovering =
                     false;
 
@@ -1766,6 +2044,8 @@
         P.destroy =
             function () {
                 this._resStopMonitor();
+                this._resUnbindVideoEvents();
+                this._resStopNativePrebuffer();
                 this._resRecovering =
                     false;
 
@@ -1849,7 +2129,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v6' +
+                        '\nresilient: ON v8' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -1883,10 +2163,22 @@
                                 : ''
                         ) +
                         (
-                            currentAttempt(this) &&
-                            currentAttempt(this)._resSyntheticHls
-                                ? '  adaptive=probe'
-                                : '  adaptive=stable'
+                            this._resIsAtFiniteEnd()
+                                ? '  liveEnd=yes'
+                                : ''
+                        ) +
+                        (
+                            isFinite(
+                                Number(
+                                    this._resLastNativePrebuffer
+                                )
+                            )
+                                ? '  startup=' +
+                                  Number(
+                                      this._resLastNativePrebuffer
+                                  ).toFixed(1) +
+                                  's'
+                                : ''
                         );
 
                     this._diagEl.textContent +=
