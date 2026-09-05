@@ -67,16 +67,18 @@
          * whatever reserve the provider actually allowed us to accumulate.
          */
         nativePrebufferTargetSec: 10,
-        nativePrebufferMaxWaitMs: 7000,
+        nativePrebufferMinimumResumeSec: 6,
+        nativePrebufferMaxWaitMs: 12000,
         nativePrebufferCheckMs: 250,
-        nativePrebufferMinUsefulSec: 1.0,
 
         /*
-         * Reconnects should come back fast. The first channel open builds a big
-         * cushion; after a real failure we only wait for a small reserve.
+         * V10 recovery hysteresis:
+         * after a real outage, DO NOT resume just because 1–2 seconds appeared.
+         * Stay on "Building live buffer…" until a useful cushion exists.
          */
-        recoveryPrebufferTargetSec: 3,
-        recoveryPrebufferMaxWaitMs: 2600,
+        recoveryPrebufferTargetSec: 6,
+        recoveryPrebufferMinimumResumeSec: 4.5,
+        recoveryPrebufferMaxWaitMs: 12000,
 
         /*
          * Low-buffer governor. This is deliberately conservative: if Native
@@ -85,11 +87,12 @@
          * available data, but it can turn some hard reconnects into a short
          * controlled refill.
          */
-        governorLowSec: 1.8,
-        governorTargetSec: 4.5,
-        governorMaxPauseMs: 1800,
+        governorLowSec: 2.0,
+        governorTargetSec: 6.0,
+        governorMinimumResumeSec: 4.0,
+        governorMaxPauseMs: 6000,
         governorCheckMs: 200,
-        governorCooldownMs: 10000,
+        governorCooldownMs: 8000,
 
         softStallMs: 4000,
         nudgeStallMs: 6500,
@@ -780,6 +783,11 @@
                     ? CFG.recoveryPrebufferMaxWaitMs
                     : CFG.nativePrebufferMaxWaitMs;
 
+            var minimumResumeSec =
+                recoveryMode
+                    ? CFG.recoveryPrebufferMinimumResumeSec
+                    : CFG.nativePrebufferMinimumResumeSec;
+
             this._resIntentionalPrebuffer =
                 true;
 
@@ -883,6 +891,18 @@
                     Date.now() -
                     started;
 
+                try {
+                    self._msg(
+                        'Building live buffer… ' +
+                        ahead.toFixed(1) +
+                        ' / ' +
+                        targetSec.toFixed(1) +
+                        's'
+                    );
+                }
+
+                catch (e) {}
+
                 if (
                     ahead >=
                     targetSec
@@ -899,14 +919,37 @@
                     maxWaitMs
                 ) {
                     /*
-                     * Even if the provider only exposed 3-5 seconds, keeping
-                     * that small reserve is still better than starting at 0.
+                     * V10 does NOT resume into another almost-guaranteed freeze.
+                     * If we have a minimally useful cushion, start playback.
+                     * Otherwise reconnect and let the provider establish a fresh
+                     * Native stream, then build the cushion again.
                      */
-                    finish(
+                    if (
                         ahead >=
-                            CFG.nativePrebufferMinUsefulSec
-                                ? 'max-wait'
-                                : 'provider-limited'
+                        minimumResumeSec
+                    ) {
+                        finish(
+                            'minimum'
+                        );
+
+                        return;
+                    }
+
+                    self._resDiag(
+                        (
+                            recoveryMode
+                                ? 'recovery '
+                                : 'startup '
+                        ) +
+                        'buffer too small ' +
+                        ahead.toFixed(1) +
+                        's -> reconnect'
+                    );
+
+                    self._resStopNativePrebuffer();
+
+                    self._resForceReconnect(
+                        'could not build safe buffer'
                     );
 
                     return;
@@ -1245,6 +1288,14 @@
             );
 
             try {
+                this._msg(
+                    'Refilling live buffer…'
+                );
+            }
+
+            catch (e) {}
+
+            try {
                 v.pause();
             }
 
@@ -1253,6 +1304,12 @@
 
             function finish() {
                 self._resStopGovernor();
+
+                try {
+                    self._hideMsg();
+                }
+
+                catch (e) {}
 
                 try {
                     v.play()
@@ -1294,14 +1351,51 @@
                         self
                     );
 
+                try {
+                    self._msg(
+                        'Refilling live buffer… ' +
+                        ahead.toFixed(1) +
+                        ' / ' +
+                        CFG.governorTargetSec.toFixed(1) +
+                        's'
+                    );
+                }
+
+                catch (e) {}
+
                 if (
                     ahead >=
-                    CFG.governorTargetSec ||
-                    Date.now() -
-                        started >=
-                        CFG.governorMaxPauseMs
+                    CFG.governorTargetSec
                 ) {
                     finish();
+                    return;
+                }
+
+                if (
+                    Date.now() -
+                        started >=
+                    CFG.governorMaxPauseMs
+                ) {
+                    if (
+                        ahead >=
+                        CFG.governorMinimumResumeSec
+                    ) {
+                        finish();
+                        return;
+                    }
+
+                    self._resDiag(
+                        'governor could not refill ' +
+                        ahead.toFixed(1) +
+                        's -> reconnect'
+                    );
+
+                    self._resStopGovernor();
+
+                    self._resForceReconnect(
+                        'low buffer could not recover'
+                    );
+
                     return;
                 }
 
@@ -2355,7 +2449,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v9' +
+                        '\nresilient: ON v10' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -2408,9 +2502,10 @@
                         ) +
                         (
                             this._resRecoveryPrebuffer
-                                ? '  recovery=fast'
+                                ? '  recovery=buffering'
                                 : ''
-                        );
+                        ) +
+                        '  policy=hysteresis';
 
                     this._diagEl.textContent +=
                         extra;
