@@ -764,6 +764,7 @@ function buildPlaylist(
 
                 return {
                     id: ep.id,
+                    url: ep.stream_url || '',
 
                     ext:
                         ep.container_extension ||
