@@ -7,7 +7,7 @@
  * behaviour, codecs, audio/subtitle handling and engine selection intact.
  *
  * What it adds for the MAIN Live TV player:
- *   - HLS.js FIRST for real .m3u8 Live TV streams (Native remains fallback)
+ *   - HLS.js FIRST whenever the original engine offers an HLS attempt
  *   - intentional initial prebuffer on HLS.js
  *   - ~15 s live reserve when the HLS window allows it
  *   - larger single-stream HLS buffer and more tolerant retries
@@ -93,7 +93,10 @@
     function looksLikeHls(self) {
         if (
             self &&
-            self.hls
+            (
+                self.hls ||
+                currentKind(self) === 'hls'
+            )
         ) {
             return true;
         }
@@ -1045,7 +1048,7 @@
 
 
     /* ─────────────────────────────────────────────────────────────
-     * Prefer HLS.js for actual .m3u8 Live TV channels
+     * Prefer HLS.js whenever the ORIGINAL engine offers HLS
      * ───────────────────────────────────────────────────────────── */
 
     var originalBuildAttempts =
@@ -1061,17 +1064,24 @@
                     );
 
                 /*
-                 * Do NOT change VOD, catch-up or Multiview. For the main Live TV
-                 * preview only, a real .m3u8 gets HLS.js first because that is the
-                 * tier whose buffer and retry behaviour JavaScript can control.
+                 * V3:
                  *
-                 * Native remains in the list immediately afterwards, so CORS,
-                 * codec or MSE failures fall back automatically.
+                 * Many IPTV servers expose HLS behind URLs that do NOT end in
+                 * ".m3u8" (for example /live/user/pass/12345).
+                 *
+                 * So we no longer inspect the URL extension here.
+                 *
+                 * If LG-IPTV's ORIGINAL engine already created an attempt whose
+                 * kind is "hls", trust that classification and move HLS.js to the
+                 * front for the MAIN Live TV player.
+                 *
+                 * Native stays in the attempt list as automatic fallback if
+                 * HLS.js fails because of CORS, codec, MSE or provider behaviour.
                  */
                 if (
                     !isMainLiveChannel(this) ||
                     !list ||
-                    list.length < 2
+                    !list.length
                 ) {
                     return list;
                 }
@@ -1089,10 +1099,7 @@
 
                     if (
                         a &&
-                        a.kind === 'hls' &&
-                        /\.m3u8(?:$|[?#])/i.test(
-                            a.url || ''
-                        )
+                        a.kind === 'hls'
                     ) {
                         hlsFirst.push(a);
                     }
@@ -1102,13 +1109,28 @@
                     }
                 }
 
-                if (!hlsFirst.length) {
-                    return list;
-                }
+                var reordered =
+                    hlsFirst.length
+                        ? hlsFirst.concat(rest)
+                        : list;
 
-                return hlsFirst.concat(
-                    rest
-                );
+                /*
+                 * Save exactly what the engine offered after reordering.
+                 * The GREEN diagnostics panel will expose this.
+                 */
+                this._resAttemptSummary =
+                    reordered.map(
+                        function (a) {
+                            return (
+                                a &&
+                                a.kind
+                            ) || '?';
+                        }
+                    ).join(
+                        ' > '
+                    );
+
+                return reordered;
             };
     }
 
@@ -1353,8 +1375,32 @@
                             this._resLastKnownLag
                         );
 
+                    var selected =
+                        currentKind(this) ||
+                        (
+                            this.hls
+                                ? 'hls'
+                                : 'native'
+                        );
+
+                    var attempts =
+                        this._resAttemptSummary ||
+                        (
+                            this._attempts &&
+                            this._attempts.length
+                                ? this._attempts.map(
+                                    function (a) {
+                                        return (
+                                            a &&
+                                            a.kind
+                                        ) || '?';
+                                    }
+                                ).join(' > ')
+                                : '—'
+                        );
+
                     var extra =
-                        '\nresilient: ON' +
+                        '\nresilient: ON v3' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -1364,7 +1410,11 @@
                         ) +
                         '  ahead=' +
                         ahead.toFixed(1) +
-                        's';
+                        's' +
+                        '\nattempts: ' +
+                        attempts +
+                        '  selected=' +
+                        selected;
 
                     this._diagEl.textContent +=
                         extra;
