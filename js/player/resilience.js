@@ -46,7 +46,6 @@
         starvationThresholdSec: 0.35,
         starvationResetSec: 1.25,
         starvationSoftMs: 800,
-        starvationReconnectMs: 2200,
 
         /*
          * Some IPTV endpoints are exposed by webOS Native as tiny finite media
@@ -90,9 +89,32 @@
         governorLowSec: 2.0,
         governorTargetSec: 6.0,
         governorMinimumResumeSec: 4.0,
-        governorMaxPauseMs: 6000,
+        governorMaxPauseMs: 7000,
         governorCheckMs: 200,
         governorCooldownMs: 8000,
+
+        /*
+         * V11 learns each channel's realistic Native buffer capacity.
+         * It then derives startup / refill / recovery thresholds from that
+         * learned capacity instead of forcing one fixed number on every stream.
+         */
+        learningMaxAheadSec: 30,
+        learningEntryTtlMs: 30 * 24 * 60 * 60 * 1000,
+        learningStableDecayMs: 5 * 60 * 1000,
+        learningSaveEveryMs: 15000,
+
+        /*
+         * When the buffer is actually empty, give Native a chance to refill
+         * in place before doing a full reconnect. Reconnect becomes last resort.
+         */
+        emergencyGovernorAfterMs: 1200,
+        starvationReconnectMs: 9000,
+
+        /*
+         * Hide the refill message for tiny recoveries. The last video frame
+         * stays visible, so a 1-second server hiccup feels less disruptive.
+         */
+        refillUiDelayMs: 1500,
 
         softStallMs: 4000,
         nudgeStallMs: 6500,
@@ -263,7 +285,12 @@
              * so the fixed-time prebuffer can do its job.
              */
             if (!isFinite(end)) {
-                return 0;
+                /*
+                 * Unknown is different from empty. Some Native webOS streams
+                 * expose Infinity here. Treating Infinity as zero makes the
+                 * protection logic panic even when playback is healthy.
+                 */
+                return -1;
             }
 
             return Math.max(
@@ -275,6 +302,34 @@
         catch (e) {
             return 0;
         }
+    }
+
+
+
+    function _resAheadKnown(value) {
+        return (
+            typeof value === 'number' &&
+            isFinite(value) &&
+            value >= 0
+        );
+    }
+
+
+    function _resAheadText(value) {
+        return _resAheadKnown(value)
+            ? value.toFixed(1)
+            : '?';
+    }
+
+
+    function _resClamp(value, min, max) {
+        return Math.max(
+            min,
+            Math.min(
+                max,
+                value
+            )
+        );
     }
 
 
@@ -313,6 +368,512 @@
             return null;
         }
     }
+
+
+
+    /* ─────────────────────────────────────────────────────────────
+     * V11 adaptive per-channel buffer learning
+     * ───────────────────────────────────────────────────────────── */
+
+    var RES_LEARN_KEY =
+        'iptv_resilience_learning_v11';
+
+
+    function _resReadLearningStore() {
+        try {
+            var raw =
+                localStorage.getItem(
+                    RES_LEARN_KEY
+                );
+
+            var data =
+                raw
+                    ? JSON.parse(raw)
+                    : {};
+
+            return (
+                data &&
+                typeof data === 'object'
+                    ? data
+                    : {}
+            );
+        }
+
+        catch (e) {
+            return {};
+        }
+    }
+
+
+    function _resWriteLearningStore(store) {
+        try {
+            localStorage.setItem(
+                RES_LEARN_KEY,
+                JSON.stringify(
+                    store
+                )
+            );
+        }
+
+        catch (e) {}
+    }
+
+
+    P._resLearningKey =
+        function () {
+            return String(
+                this._contentKey ||
+                'unknown-live'
+            );
+        };
+
+
+    P._resLoadLearning =
+        function () {
+            var key =
+                this._resLearningKey();
+
+            if (
+                this._resLearning &&
+                this._resLearningKeyCached ===
+                    key
+            ) {
+                return this._resLearning;
+            }
+
+            var store =
+                _resReadLearningStore();
+
+            var now =
+                Date.now();
+
+            /*
+             * Opportunistic pruning keeps localStorage tiny.
+             */
+            var keys =
+                Object.keys(store);
+
+            for (
+                var i = 0;
+                i < keys.length;
+                i++
+            ) {
+                var old =
+                    store[
+                        keys[i]
+                    ];
+
+                if (
+                    !old ||
+                    !old.lastSeen ||
+                    now -
+                        old.lastSeen >
+                        CFG.learningEntryTtlMs
+                ) {
+                    delete store[
+                        keys[i]
+                    ];
+                }
+            }
+
+            var state =
+                store[key] ||
+                {
+                    peak: 0,
+                    ema: 0,
+                    samples: 0,
+                    instability: 0,
+                    lastFailure: 0,
+                    lastSeen: now
+                };
+
+            /*
+             * A channel that has been stable for a while gradually becomes
+             * less aggressive again.
+             */
+            if (
+                state.instability > 0 &&
+                state.lastFailure &&
+                now -
+                    state.lastFailure >
+                    CFG.learningStableDecayMs
+            ) {
+                var steps =
+                    Math.floor(
+                        (
+                            now -
+                            state.lastFailure
+                        ) /
+                        CFG.learningStableDecayMs
+                    );
+
+                state.instability =
+                    Math.max(
+                        0,
+                        state.instability -
+                        steps
+                    );
+
+                if (
+                    state.instability === 0
+                ) {
+                    state.lastFailure =
+                        0;
+                }
+            }
+
+            this._resLearning =
+                state;
+
+            this._resLearningStore =
+                store;
+
+            this._resLearningKeyCached =
+                key;
+
+            this._resLearningLastSave =
+                0;
+
+            return state;
+        };
+
+
+    P._resSaveLearning =
+        function (force) {
+            var state =
+                this._resLoadLearning();
+
+            var now =
+                Date.now();
+
+            if (
+                !force &&
+                this._resLearningLastSave &&
+                now -
+                    this._resLearningLastSave <
+                    CFG.learningSaveEveryMs
+            ) {
+                return;
+            }
+
+            state.lastSeen =
+                now;
+
+            this._resLearningStore[
+                this._resLearningKey()
+            ] = state;
+
+            _resWriteLearningStore(
+                this._resLearningStore
+            );
+
+            this._resLearningLastSave =
+                now;
+        };
+
+
+    P._resObserveAhead =
+        function (ahead) {
+            if (
+                !_resAheadKnown(ahead) ||
+                ahead >
+                    CFG.learningMaxAheadSec
+            ) {
+                return;
+            }
+
+            var state =
+                this._resLoadLearning();
+
+            var oldPeak =
+                Number(
+                    state.peak
+                ) || 0;
+
+            if (
+                ahead >
+                oldPeak
+            ) {
+                state.peak =
+                    ahead;
+            }
+
+            state.ema =
+                state.samples
+                    ? (
+                        Number(
+                            state.ema
+                        ) *
+                        0.95 +
+                        ahead *
+                        0.05
+                    )
+                    : ahead;
+
+            state.samples =
+                (
+                    Number(
+                        state.samples
+                    ) ||
+                    0
+                ) +
+                1;
+
+            state.lastSeen =
+                Date.now();
+
+            this._resSaveLearning(
+                ahead >
+                    oldPeak +
+                    0.75
+            );
+        };
+
+
+    P._resMarkInstability =
+        function (reason) {
+            var state =
+                this._resLoadLearning();
+
+            var now =
+                Date.now();
+
+            /*
+             * Multiple failures close together increase protection.
+             * A failure after a long stable period starts from a low score.
+             */
+            if (
+                state.lastFailure &&
+                now -
+                    state.lastFailure <
+                    2 *
+                    60 *
+                    1000
+            ) {
+                state.instability =
+                    Math.min(
+                        4,
+                        (
+                            Number(
+                                state.instability
+                            ) ||
+                            0
+                        ) +
+                        1
+                    );
+            }
+
+            else {
+                state.instability =
+                    Math.max(
+                        1,
+                        Number(
+                            state.instability
+                        ) ||
+                        0
+                    );
+            }
+
+            state.lastFailure =
+                now;
+
+            state.lastSeen =
+                now;
+
+            this._resSaveLearning(
+                true
+            );
+
+            this._resDiag(
+                'adaptive instability=' +
+                state.instability +
+                (
+                    reason
+                        ? ' ' + reason
+                        : ''
+                )
+            );
+        };
+
+
+    P._resAdaptiveTargets =
+        function () {
+            var state =
+                this._resLoadLearning();
+
+            var learnedPeak =
+                Number(
+                    state.peak
+                ) || 0;
+
+            /*
+             * Before enough samples exist, 10 s is a sensible default.
+             * Once the TV proves a channel can only hold e.g. ~6 s, stop asking
+             * that channel for an impossible 10–15 s cushion forever.
+             */
+            var capacity =
+                learnedPeak >= 2.5
+                    ? learnedPeak
+                    : (
+                        _resAheadKnown(
+                            Number(
+                                this._resLastNativePrebuffer
+                            )
+                        )
+                            ? Number(
+                                this._resLastNativePrebuffer
+                            )
+                            : 10
+                    );
+
+            capacity =
+                _resClamp(
+                    capacity,
+                    3.5,
+                    20
+                );
+
+            var instability =
+                _resClamp(
+                    Number(
+                        state.instability
+                    ) || 0,
+                    0,
+                    4
+                );
+
+            var startupTarget =
+                _resClamp(
+                    capacity *
+                        0.90 +
+                    instability *
+                        0.30,
+                    4,
+                    15
+                );
+
+            /*
+             * Never demand materially more than the channel has demonstrated.
+             */
+            startupTarget =
+                Math.min(
+                    startupTarget,
+                    capacity *
+                        0.98 +
+                        0.5
+                );
+
+            var startupMinimum =
+                _resClamp(
+                    startupTarget *
+                        0.62,
+                    2.8,
+                    Math.max(
+                        3,
+                        startupTarget -
+                            0.5
+                    )
+                );
+
+            var recoveryTarget =
+                _resClamp(
+                    capacity *
+                        0.60 +
+                    instability *
+                        0.35,
+                    4,
+                    9
+                );
+
+            recoveryTarget =
+                Math.min(
+                    recoveryTarget,
+                    capacity *
+                        0.90 +
+                        0.4
+                );
+
+            var recoveryMinimum =
+                _resClamp(
+                    recoveryTarget *
+                        0.70,
+                    3,
+                    Math.max(
+                        3.2,
+                        recoveryTarget -
+                            0.4
+                    )
+                );
+
+            var governorLow =
+                _resClamp(
+                    capacity *
+                        0.27 +
+                    instability *
+                        0.20,
+                    1.7,
+                    4.2
+                );
+
+            var governorTarget =
+                _resClamp(
+                    capacity *
+                        0.72 +
+                    instability *
+                        0.35,
+                    4.5,
+                    12
+                );
+
+            governorTarget =
+                Math.min(
+                    governorTarget,
+                    capacity *
+                        0.95 +
+                        0.5
+                );
+
+            var governorMinimum =
+                _resClamp(
+                    governorTarget *
+                        0.65,
+                    3,
+                    Math.max(
+                        3.2,
+                        governorTarget -
+                            0.5
+                    )
+                );
+
+            return {
+                capacity:
+                    capacity,
+
+                instability:
+                    instability,
+
+                startupTarget:
+                    startupTarget,
+
+                startupMinimum:
+                    startupMinimum,
+
+                recoveryTarget:
+                    recoveryTarget,
+
+                recoveryMinimum:
+                    recoveryMinimum,
+
+                governorLow:
+                    governorLow,
+
+                governorTarget:
+                    governorTarget,
+
+                governorMinimum:
+                    governorMinimum
+            };
+        };
 
 
     /* ─────────────────────────────────────────────────────────────
@@ -668,7 +1229,7 @@
                 ) {
                     self._resDiag(
                         'prebuffer ready ' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         's'
                     );
 
@@ -682,7 +1243,7 @@
                 ) {
                     self._resDiag(
                         'prebuffer max wait ' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         's'
                     );
 
@@ -773,20 +1334,26 @@
             var recoveryMode =
                 !!this._resRecoveryPrebuffer;
 
+            var adaptive =
+                this._resAdaptiveTargets();
+
             var targetSec =
                 recoveryMode
-                    ? CFG.recoveryPrebufferTargetSec
-                    : CFG.nativePrebufferTargetSec;
+                    ? adaptive.recoveryTarget
+                    : adaptive.startupTarget;
+
+            var minimumResumeSec =
+                recoveryMode
+                    ? adaptive.recoveryMinimum
+                    : adaptive.startupMinimum;
 
             var maxWaitMs =
                 recoveryMode
                     ? CFG.recoveryPrebufferMaxWaitMs
                     : CFG.nativePrebufferMaxWaitMs;
 
-            var minimumResumeSec =
-                recoveryMode
-                    ? CFG.recoveryPrebufferMinimumResumeSec
-                    : CFG.nativePrebufferMinimumResumeSec;
+            var bestAhead =
+                0;
 
             this._resIntentionalPrebuffer =
                 true;
@@ -819,7 +1386,17 @@
                     );
 
                 self._resLastNativePrebuffer =
-                    ahead;
+                    _resAheadKnown(ahead)
+                        ? ahead
+                        : self._resLastNativePrebuffer;
+
+                if (
+                    _resAheadKnown(ahead)
+                ) {
+                    self._resObserveAhead(
+                        ahead
+                    );
+                }
 
                 if (recoveryMode) {
                     self._resRecoveryPrebuffer =
@@ -832,7 +1409,7 @@
                             ? 'recovery prebuffer '
                             : 'native prebuffer '
                     ) +
-                    ahead.toFixed(1) +
+                    _resAheadText(ahead) +
                     's ' +
                     reason
                 );
@@ -887,6 +1464,20 @@
                         self
                     );
 
+                if (
+                    _resAheadKnown(ahead)
+                ) {
+                    bestAhead =
+                        Math.max(
+                            bestAhead,
+                            ahead
+                        );
+
+                    self._resObserveAhead(
+                        ahead
+                    );
+                }
+
                 var waited =
                     Date.now() -
                     started;
@@ -894,7 +1485,7 @@
                 try {
                     self._msg(
                         'Building live buffer… ' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         ' / ' +
                         targetSec.toFixed(1) +
                         's'
@@ -904,6 +1495,7 @@
                 catch (e) {}
 
                 if (
+                    _resAheadKnown(ahead) &&
                     ahead >=
                     targetSec
                 ) {
@@ -925,11 +1517,47 @@
                      * Native stream, then build the cushion again.
                      */
                     if (
+                        !_resAheadKnown(ahead)
+                    ) {
+                        /*
+                         * Native sometimes hides the real buffer range.
+                         * The intentional pause still created delay even though
+                         * we cannot measure it.
+                         */
+                        finish(
+                            'timed-unknown'
+                        );
+
+                        return;
+                    }
+
+                    if (
                         ahead >=
                         minimumResumeSec
                     ) {
                         finish(
                             'minimum'
+                        );
+
+                        return;
+                    }
+
+                    /*
+                     * If this channel has just demonstrated a lower physical
+                     * ceiling, accept a large fraction of that learned ceiling
+                     * rather than enter a reconnect loop asking for the impossible.
+                     */
+                    if (
+                        bestAhead >= 2.5 &&
+                        ahead >=
+                            Math.max(
+                                2.5,
+                                bestAhead *
+                                    0.80
+                            )
+                    ) {
+                        finish(
+                            'learned-cap'
                         );
 
                         return;
@@ -942,14 +1570,14 @@
                                 : 'startup '
                         ) +
                         'buffer too small ' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         's -> reconnect'
                     );
 
                     self._resStopNativePrebuffer();
 
                     self._resForceReconnect(
-                        'could not build safe buffer'
+                        'could not build adaptive buffer'
                     );
 
                     return;
@@ -1143,7 +1771,7 @@
                 self._resDiag(
                     name +
                     ' ahead=' +
-                    ahead.toFixed(1)
+                    _resAheadText(ahead)
                 );
 
                 /*
@@ -1151,8 +1779,11 @@
                  * The interval watchdog will give the server ~2.2 s to recover.
                  */
                 if (
-                    ahead <=
-                    CFG.starvationThresholdSec &&
+                    (
+                        !_resAheadKnown(ahead) ||
+                        ahead <=
+                            CFG.starvationThresholdSec
+                    ) &&
                     !self._resStarvedAt
                 ) {
                     self._resStarvedAt =
@@ -1237,13 +1868,27 @@
                     null;
             }
 
+            if (
+                this._resGovernorUiTimer
+            ) {
+                clearTimeout(
+                    this._resGovernorUiTimer
+                );
+
+                this._resGovernorUiTimer =
+                    null;
+            }
+
             this._resIntentionalGovernor =
+                false;
+
+            this._resGovernorEmergency =
                 false;
         };
 
 
     P._resStartGovernor =
-        function () {
+        function (emergency) {
             if (
                 !isMainLiveChannel(this) ||
                 this._lightBuffer ||
@@ -1260,6 +1905,7 @@
                 Date.now();
 
             if (
+                !emergency &&
                 this._resGovernorLastAt &&
                 now -
                     this._resGovernorLastAt <
@@ -1277,23 +1923,61 @@
             var started =
                 now;
 
+            var adaptive =
+                this._resAdaptiveTargets();
+
+            var targetSec =
+                adaptive.governorTarget;
+
+            var minimumResumeSec =
+                adaptive.governorMinimum;
+
+            var maxPauseMs =
+                CFG.governorMaxPauseMs +
+                adaptive.instability *
+                    750;
+
+            var bestAhead =
+                0;
+
             this._resGovernorLastAt =
                 now;
 
             this._resIntentionalGovernor =
                 true;
 
+            this._resGovernorEmergency =
+                !!emergency;
+
             this._resDiag(
                 'governor refill'
             );
 
-            try {
-                this._msg(
-                    'Refilling live buffer…'
+            if (
+                this._resGovernorUiTimer
+            ) {
+                clearTimeout(
+                    this._resGovernorUiTimer
                 );
             }
 
-            catch (e) {}
+            this._resGovernorUiTimer =
+                setTimeout(
+                    function () {
+                        if (
+                            self._resIntentionalGovernor
+                        ) {
+                            try {
+                                self._msg(
+                                    'Refilling live buffer…'
+                                );
+                            }
+
+                            catch (e) {}
+                        }
+                    },
+                    CFG.refillUiDelayMs
+                );
 
             try {
                 v.pause();
@@ -1351,21 +2035,43 @@
                         self
                     );
 
-                try {
-                    self._msg(
-                        'Refilling live buffer… ' +
-                        ahead.toFixed(1) +
-                        ' / ' +
-                        CFG.governorTargetSec.toFixed(1) +
-                        's'
+                if (
+                    _resAheadKnown(ahead)
+                ) {
+                    bestAhead =
+                        Math.max(
+                            bestAhead,
+                            ahead
+                        );
+
+                    self._resObserveAhead(
+                        ahead
                     );
                 }
 
-                catch (e) {}
+                if (
+                    self._resGovernorUiTimer ===
+                        null ||
+                    self._resGovernorUiTimer ===
+                        undefined
+                ) {
+                    try {
+                        self._msg(
+                            'Refilling live buffer… ' +
+                            _resAheadText(ahead) +
+                            ' / ' +
+                            targetSec.toFixed(1) +
+                            's'
+                        );
+                    }
+
+                    catch (e) {}
+                }
 
                 if (
+                    _resAheadKnown(ahead) &&
                     ahead >=
-                    CFG.governorTargetSec
+                    targetSec
                 ) {
                     finish();
                     return;
@@ -1374,11 +2080,23 @@
                 if (
                     Date.now() -
                         started >=
-                    CFG.governorMaxPauseMs
+                    maxPauseMs
                 ) {
                     if (
+                        !_resAheadKnown(ahead)
+                    ) {
+                        /*
+                         * Unknown Native range: we still held playback for a
+                         * fixed refill period. Resume and let stall detection
+                         * decide whether the stream is genuinely dead.
+                         */
+                        finish();
+                        return;
+                    }
+
+                    if (
                         ahead >=
-                        CFG.governorMinimumResumeSec
+                        minimumResumeSec
                     ) {
                         finish();
                         return;
@@ -1386,14 +2104,16 @@
 
                     self._resDiag(
                         'governor could not refill ' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         's -> reconnect'
                     );
 
                     self._resStopGovernor();
 
                     self._resForceReconnect(
-                        'low buffer could not recover'
+                        emergency
+                            ? 'empty buffer could not refill'
+                            : 'low buffer could not recover'
                     );
 
                     return;
@@ -1559,6 +2279,7 @@
                 bufferAhead(this);
 
             if (
+                !_resAheadKnown(ahead) ||
                 ahead <
                 1.5
             ) {
@@ -1629,6 +2350,11 @@
 
             this._resRecovering =
                 true;
+
+            this._resMarkInstability(
+                reason ||
+                'reconnect'
+            );
 
             /*
              * The next successful Native attempt should rebuild only a small
@@ -1813,10 +2539,22 @@
                             );
 
                         if (
+                            _resAheadKnown(aheadNow)
+                        ) {
+                            self._resObserveAhead(
+                                aheadNow
+                            );
+                        }
+
+                        var adaptive =
+                            self._resAdaptiveTargets();
+
+                        if (
+                            _resAheadKnown(aheadNow) &&
                             aheadNow >
                                 CFG.starvationThresholdSec &&
                             aheadNow <=
-                                CFG.governorLowSec &&
+                                adaptive.governorLow &&
                             !video.paused
                         ) {
                             self._resStartGovernor();
@@ -1829,6 +2567,7 @@
                         }
 
                         if (
+                            _resAheadKnown(aheadNow) &&
                             aheadNow <=
                                 CFG.starvationThresholdSec
                         ) {
@@ -1865,6 +2604,22 @@
 
                             if (
                                 starvationMs >=
+                                    CFG.emergencyGovernorAfterMs &&
+                                !self._resIntentionalGovernor
+                            ) {
+                                self._resStartGovernor(
+                                    true
+                                );
+
+                                if (
+                                    self._resIntentionalGovernor
+                                ) {
+                                    return;
+                                }
+                            }
+
+                            if (
+                                starvationMs >=
                                 CFG.starvationReconnectMs
                             ) {
                                 self._resHandleStarvation(
@@ -1881,6 +2636,7 @@
                         }
 
                         else if (
+                            _resAheadKnown(aheadNow) &&
                             aheadNow >=
                                 CFG.starvationResetSec
                         ) {
@@ -1941,6 +2697,7 @@
                                 false;
 
                             if (
+                                _resAheadKnown(aheadNow) &&
                                 aheadNow >=
                                     CFG.starvationResetSec
                             ) {
@@ -2449,7 +3206,7 @@
                         );
 
                     var extra =
-                        '\nresilient: ON v10' +
+                        '\nresilient: ON v11' +
                         '  reserve=' +
                         (
                             isFinite(lag)
@@ -2458,7 +3215,7 @@
                                 : '—'
                         ) +
                         '  ahead=' +
-                        ahead.toFixed(1) +
+                        _resAheadText(ahead) +
                         's' +
                         '\nattempts: ' +
                         attempts +
@@ -2505,7 +3262,27 @@
                                 ? '  recovery=buffering'
                                 : ''
                         ) +
-                        '  policy=hysteresis';
+                        (
+                            function (self) {
+                                var a =
+                                    self._resAdaptiveTargets();
+
+                                return (
+                                    '  learned=' +
+                                    a.capacity.toFixed(1) +
+                                    's' +
+                                    '  risk=' +
+                                    a.instability +
+                                    '  protect<' +
+                                    a.governorLow.toFixed(1) +
+                                    's' +
+                                    '  refill>' +
+                                    a.governorTarget.toFixed(1) +
+                                    's'
+                                );
+                            }(this)
+                        ) +
+                        '  policy=adaptive';
 
                     this._diagEl.textContent +=
                         extra;
