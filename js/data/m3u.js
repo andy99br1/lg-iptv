@@ -1,119 +1,643 @@
 // ── M3U / M3U8 playlist support ───────────────────────────────────────────────
+// Persistent fixed-URL Live cache + progressive M3U parser.
 // Parses M3U playlists, separates Live TV / Movies / Series,
 // and provides automatic XMLTV EPG support for M3U profiles.
 
-const M3U_CACHE_KEY = "iptv_m3u_v1";
-const M3U_TTL_MS = 4 * 60 * 60 * 1000;
+const M3U_CACHE_KEY =
+    "iptv_m3u_fixed_live_v2";
 
-function m3uLoadConfig() {
-    // Prefer the active profile because it also contains epg_url / epg_match.
+
+/*
+ * This user's playlists are versioned by URL: when the playlist changes, the
+ * profile URL changes too. Therefore Live cache does not expire by time.
+ *
+ * Rule:
+ *   same exact playlist URL -> trust local Live cache forever
+ *   different playlist URL  -> ignore old cache and download the new playlist
+ */
+
+function _m3uConfiguredUrlSync() {
+    /*
+     * m3uLoadCache() is intentionally synchronous because app.js can use it
+     * during startup before the Live screen is booted.
+     */
     try {
-        const profiles = JSON.parse(localStorage.getItem("iptv_profiles") || "[]");
-        const activeId = localStorage.getItem("iptv_active_profile");
+        const profiles =
+            JSON.parse(
+                localStorage.getItem(
+                    "iptv_profiles"
+                ) ||
+                "[]"
+            );
 
-        if (Array.isArray(profiles) && profiles.length) {
-            let active = null;
+        const activeId =
+            localStorage.getItem(
+                "iptv_active_profile"
+            );
+
+        if (
+            Array.isArray(
+                profiles
+            ) &&
+            profiles.length
+        ) {
+            let active =
+                null;
 
             if (activeId) {
-                active = profiles.find(function (p) {
-                    return String(p.id) === String(activeId);
-                });
+                active =
+                    profiles.find(
+                        function (p) {
+                            return (
+                                p &&
+                                String(
+                                    p.id
+                                ) ===
+                                    String(
+                                        activeId
+                                    )
+                            );
+                        }
+                    );
             }
 
-            if (!active) {
-                active = profiles.find(function (p) {
-                    return p && p.type === "m3u" && p.playlist_url;
-                });
+            if (
+                !active
+            ) {
+                active =
+                    profiles.find(
+                        function (p) {
+                            return (
+                                p &&
+                                p.type ===
+                                    "m3u" &&
+                                p.playlist_url
+                            );
+                        }
+                    );
             }
 
-            if (active && active.type === "m3u" && active.playlist_url) {
-                return Promise.resolve(active);
+            if (
+                active &&
+                active.type ===
+                    "m3u" &&
+                active.playlist_url
+            ) {
+                return String(
+                    active.playlist_url
+                );
             }
         }
-    } catch (e) {}
+    }
 
-    const stored = (() => {
-        try {
-            return JSON.parse(localStorage.getItem("iptv_m3u_config"));
-        } catch (e) {
-            return null;
+    catch (e) {}
+
+    try {
+        const stored =
+            JSON.parse(
+                localStorage.getItem(
+                    "iptv_m3u_config"
+                ) ||
+                "null"
+            );
+
+        if (
+            stored &&
+            stored.playlist_url
+        ) {
+            return String(
+                stored.playlist_url
+            );
         }
-    })();
+    }
 
-    if (stored && stored.playlist_url) {
-        return Promise.resolve(stored);
+    catch (e) {}
+
+    try {
+        if (
+            window.IPTV_M3U_CONFIG &&
+            window.IPTV_M3U_CONFIG
+                .playlist_url
+        ) {
+            return String(
+                window.IPTV_M3U_CONFIG
+                    .playlist_url
+            );
+        }
+    }
+
+    catch (e) {}
+
+    return "";
+}
+
+
+function _m3uCacheUrl(
+    cfgOrUrl
+) {
+    if (
+        typeof cfgOrUrl ===
+        "string"
+    ) {
+        return cfgOrUrl;
     }
 
     if (
-        window.IPTV_M3U_CONFIG &&
-        window.IPTV_M3U_CONFIG.playlist_url
+        cfgOrUrl &&
+        cfgOrUrl.playlist_url
     ) {
-        return Promise.resolve(
-            window.IPTV_M3U_CONFIG
+        return String(
+            cfgOrUrl.playlist_url
         );
     }
 
-    return Promise.reject(
-        new Error("No M3U playlist URL configured")
+    return _m3uConfiguredUrlSync();
+}
+
+
+function _m3uPackLiveChannels(
+    channels
+) {
+    /*
+     * Compact arrays use much less localStorage than repeating object keys for
+     * every channel. This matters on older TVs with small storage quotas.
+     *
+     * [id, name, logo, epgId, categoryId, streamUrl, source]
+     */
+    return (
+        channels ||
+        []
+    ).map(
+        function (c) {
+            return [
+                c.stream_id || "",
+                c.name || "",
+                c.stream_icon || "",
+                c.epg_channel_id || "",
+                c.category_id || "",
+                c.stream_url || "",
+                c._source || "m3u"
+            ];
+        }
     );
 }
 
 
-// ── Disk cache: Live only ─────────────────────────────────────────────────────
-// We deliberately do not save the huge VOD library in localStorage.
+function _m3uUnpackLiveChannels(
+    packed
+) {
+    if (
+        !Array.isArray(
+            packed
+        )
+    ) {
+        return [];
+    }
 
-function m3uLoadCache() {
+    return packed.map(
+        function (row) {
+            if (
+                !Array.isArray(
+                    row
+                )
+            ) {
+                return row || {};
+            }
+
+            return {
+                stream_id:
+                    row[0] || "",
+
+                name:
+                    row[1] || "",
+
+                stream_icon:
+                    row[2] || "",
+
+                epg_channel_id:
+                    row[3] || "",
+
+                category_id:
+                    row[4] || "",
+
+                stream_url:
+                    row[5] || "",
+
+                _source:
+                    row[6] || "m3u"
+            };
+        }
+    );
+}
+
+
+function _m3uPackLiveCategories(
+    categories
+) {
+    /*
+     * [category_id, category_name]
+     */
+    return (
+        categories ||
+        []
+    ).map(
+        function (c) {
+            return [
+                c.category_id || "",
+                c.category_name || ""
+            ];
+        }
+    );
+}
+
+
+function _m3uUnpackLiveCategories(
+    packed
+) {
+    if (
+        !Array.isArray(
+            packed
+        )
+    ) {
+        return [];
+    }
+
+    return packed.map(
+        function (row) {
+            if (
+                !Array.isArray(
+                    row
+                )
+            ) {
+                return row || {};
+            }
+
+            return {
+                category_id:
+                    row[0] || "",
+
+                category_name:
+                    row[1] || ""
+            };
+        }
+    );
+}
+
+
+// ── Persistent disk cache: Live only ──────────────────────────────────────────
+// VOD/Series remain memory-only because a mixed playlist can be huge.
+
+function m3uLoadCache(
+    cfgOrUrl
+) {
     try {
-        const raw = localStorage.getItem(M3U_CACHE_KEY);
+        const wantedUrl =
+            _m3uCacheUrl(
+                cfgOrUrl
+            );
+
+        if (!wantedUrl) {
+            return null;
+        }
+
+        const raw =
+            localStorage.getItem(
+                M3U_CACHE_KEY
+            );
 
         if (!raw) {
             return null;
         }
 
-        const data = JSON.parse(raw);
+        const data =
+            JSON.parse(raw);
 
         if (
             !data ||
-            Date.now() - data.ts >
-                M3U_TTL_MS
+            data.v !== 2 ||
+            !data.url ||
+            String(
+                data.url
+            ) !==
+                String(
+                    wantedUrl
+                )
+        ) {
+            /*
+             * A different URL represents a different fixed playlist. Do not
+             * show channels belonging to the previous profile/list.
+             */
+            return null;
+        }
+
+        const channels =
+            _m3uUnpackLiveChannels(
+                data.c
+            );
+
+        const categories =
+            _m3uUnpackLiveCategories(
+                data.g
+            );
+
+        if (
+            !channels.length
         ) {
             return null;
         }
 
         return {
             channels:
-                data.channels || [],
+                channels,
 
             categories:
-                data.categories || []
+                categories,
+
+            playlist_url:
+                wantedUrl,
+
+            epgUrl:
+                data.epg || "",
+
+            epgMatch:
+                data.epgMatch ||
+                "tvg-id",
+
+            savedAt:
+                data.savedAt || 0,
+
+            permanent:
+                true
         };
-    } catch (e) {
+    }
+
+    catch (e) {
         return null;
     }
 }
 
+
 function m3uSaveCache(
     channels,
-    categories
+    categories,
+    meta
 ) {
+    /*
+     * Never persist an early progressive snapshot.
+     */
     try {
+        if (
+            window.__M3U_PROGRESSIVE_LOADING__
+        ) {
+            return false;
+        }
+    }
+
+    catch (e) {}
+
+    try {
+        const url =
+            (
+                meta &&
+                typeof meta ===
+                    "object" &&
+                meta.playlist_url
+            )
+                ? String(
+                    meta.playlist_url
+                )
+                : (
+                    typeof meta ===
+                        "string"
+                        ? meta
+                        : (
+                            _m3uMemoryUrl ||
+                            _m3uConfiguredUrlSync()
+                        )
+                );
+
+        if (
+            !url ||
+            !channels ||
+            !channels.length
+        ) {
+            return false;
+        }
+
+        const epg =
+            (
+                meta &&
+                typeof meta ===
+                    "object" &&
+                meta.epgUrl
+            ) ||
+            (
+                _m3uLastLibrary &&
+                _m3uLastLibrary.epgUrl
+            ) ||
+            "";
+
+        const epgMatch =
+            (
+                meta &&
+                typeof meta ===
+                    "object" &&
+                meta.epgMatch
+            ) ||
+            (
+                _m3uLastLibrary &&
+                _m3uLastLibrary.epgMatch
+            ) ||
+            "tvg-id";
+
+        const payload = {
+            v: 2,
+            url:
+                url,
+
+            savedAt:
+                Date.now(),
+
+            epg:
+                epg,
+
+            epgMatch:
+                epgMatch,
+
+            c:
+                _m3uPackLiveChannels(
+                    channels
+                ),
+
+            g:
+                _m3uPackLiveCategories(
+                    categories
+                )
+        };
+
         localStorage.setItem(
             M3U_CACHE_KEY,
-            JSON.stringify({
-                ts: Date.now(),
-                channels: channels,
-                categories: categories
-            })
+            JSON.stringify(
+                payload
+            )
         );
-    } catch (e) {}
+
+        /*
+         * The old time-limited cache can safely disappear once V2 is written.
+         */
+        try {
+            localStorage.removeItem(
+                "iptv_m3u_v1"
+            );
+        }
+
+        catch (e) {}
+
+        return true;
+    }
+
+    catch (e) {
+        /*
+         * Quota/security failures must never prevent Live TV from working.
+         * The app simply behaves like a first load next time.
+         */
+        return false;
+    }
 }
+
 
 function m3uClearCache() {
     try {
         localStorage.removeItem(
             M3U_CACHE_KEY
         );
-    } catch (e) {}
+
+        localStorage.removeItem(
+            "iptv_m3u_v1"
+        );
+    }
+
+    catch (e) {}
+}
+
+
+function _m3uLibraryFromLiveCache(
+    cache,
+    cfg
+) {
+    const channels =
+        (
+            cache &&
+            cache.channels
+        ) ||
+        [];
+
+    const urlById = {};
+    const channelById = {};
+
+    for (
+        let i = 0;
+        i <
+            channels.length;
+        i++
+    ) {
+        const channel =
+            channels[i];
+
+        const id =
+            String(
+                channel.stream_id ||
+                ""
+            );
+
+        if (!id) {
+            continue;
+        }
+
+        urlById[
+            id
+        ] =
+            channel.stream_url ||
+            "";
+
+        channelById[
+            id
+        ] =
+            channel;
+    }
+
+    const playlistUrl =
+        (
+            cfg &&
+            cfg.playlist_url
+        ) ||
+        (
+            cache &&
+            cache.playlist_url
+        ) ||
+        "";
+
+    const configuredEpg =
+        (
+            cfg &&
+            cfg.epg_url
+        )
+            ? _m3uResolveRelativeUrl(
+                cfg.epg_url,
+                playlistUrl
+            )
+            : "";
+
+    return {
+        channels:
+            channels,
+
+        categories:
+            (
+                cache &&
+                cache.categories
+            ) ||
+            [],
+
+        /*
+         * Live cache intentionally does not pretend to contain VOD.
+         * m3uGetLibrary() forces a network parse only if VOD/Series is opened
+         * in this app session.
+         */
+        movies: [],
+        movieCategories: [],
+        series: [],
+        seriesCategories: [],
+        seriesInfo: {},
+
+        urlById:
+            urlById,
+
+        channelById:
+            channelById,
+
+        epgUrl:
+            configuredEpg ||
+            (
+                cache &&
+                cache.epgUrl
+            ) ||
+            "",
+
+        epgMatch:
+            (
+                cfg &&
+                cfg.epg_match
+            ) ||
+            (
+                cache &&
+                cache.epgMatch
+            ) ||
+            "tvg-id",
+
+        _fromPersistentLiveCache:
+            true
+    };
 }
 
 
@@ -890,9 +1414,766 @@ function m3uParse(text) {
 }
 
 
+// ── Progressive / non-blocking parser ─────────────────────────────────────────
+//
+// The original parser is intentionally kept above for compatibility, but a huge
+// mixed Live+VOD+Series playlist can occupy the webOS main thread for seconds.
+// This version parses in short time slices and yields back to the TV between
+// chunks. With a progress callback, Live channels are published before the VOD
+// and Series portion has finished parsing.
+
+function m3uParseProgressive(
+    text,
+    onProgress
+) {
+    const lines =
+        text
+            .replace(/\r\n?/g, "\n")
+            .split("\n");
+
+    const channels = [];
+    const movies = [];
+
+    const seriesMap =
+        new Map();
+
+    const seriesInfo = {};
+    const urlById = {};
+    const channelById = {};
+
+    const liveCats =
+        new Map();
+
+    const movieCats =
+        new Map();
+
+    const seriesCats =
+        new Map();
+
+    const epgUrl =
+        _m3uExtractHeaderEpgUrl(
+            text
+        );
+
+    let extinf = null;
+    let itemNo = 1;
+    let seriesNo = 1;
+    let lineIndex = 0;
+
+    let lastProgressLiveCount = 0;
+    let lastProgressAt = 0;
+
+    const FIRST_LIVE_BATCH = 32;
+    const NEXT_LIVE_BATCH = 180;
+    const PROGRESS_MAX_WAIT_MS = 450;
+
+    /*
+     * Keep slices deliberately short. Older LG TVs run an old Chromium build
+     * and input/scroll events need frequent opportunities to run.
+     */
+    const SLICE_MAX_LINES = 320;
+    const SLICE_MAX_MS = 9;
+
+
+    function publishProgress(force) {
+        if (
+            typeof onProgress !==
+            "function"
+        ) {
+            return;
+        }
+
+        const now =
+            Date.now();
+
+        const first =
+            lastProgressLiveCount === 0 &&
+            channels.length >=
+                FIRST_LIVE_BATCH;
+
+        const enoughNew =
+            channels.length -
+                lastProgressLiveCount >=
+                NEXT_LIVE_BATCH;
+
+        const waited =
+            channels.length >
+                lastProgressLiveCount &&
+            now -
+                lastProgressAt >=
+                PROGRESS_MAX_WAIT_MS;
+
+        if (
+            !force &&
+            !first &&
+            !enoughNew &&
+            !waited
+        ) {
+            return;
+        }
+
+        lastProgressLiveCount =
+            channels.length;
+
+        lastProgressAt =
+            now;
+
+        /*
+         * Send a snapshot, not the live array reference. The parser keeps
+         * pushing into channels while the virtual list is being navigated.
+         */
+        onProgress({
+            channels:
+                channels.slice(),
+
+            categories:
+                _m3uCats(
+                    liveCats
+                ),
+
+            processedLines:
+                lineIndex,
+
+            totalLines:
+                lines.length,
+
+            done:
+                !!force
+        });
+    }
+
+
+    function consumeMediaLine(
+        line
+    ) {
+        if (!extinf) {
+            return;
+        }
+
+        const name =
+            extinf
+                .replace(
+                    /^#EXTINF[^,]*,/,
+                    ""
+                )
+                .trim();
+
+        const tvgId =
+            _parseAttr(
+                extinf,
+                "tvg-id"
+            ) ||
+            _parseAttr(
+                extinf,
+                "tvg-name"
+            ) ||
+            name;
+
+        const logo =
+            _parseAttr(
+                extinf,
+                "tvg-logo"
+            );
+
+        const group =
+            _parseAttr(
+                extinf,
+                "group-title"
+            ) ||
+            "Uncategorised";
+
+        const idNum =
+            itemNo++;
+
+        const isSeries =
+            _m3uLooksSeries(
+                group,
+                name,
+                line
+            );
+
+        const isMovie =
+            !isSeries &&
+            _m3uLooksMovie(
+                group,
+                name,
+                line
+            );
+
+
+        if (isSeries) {
+            const ep =
+                _m3uEpisodeInfo(
+                    name
+                );
+
+            const catId =
+                _m3uCatId(
+                    seriesCats,
+                    group,
+                    "s"
+                );
+
+            const seriesKey =
+                _m3uNorm(
+                    group +
+                    "||" +
+                    ep.seriesName
+                );
+
+            let series =
+                seriesMap.get(
+                    seriesKey
+                );
+
+            if (!series) {
+                const seriesId =
+                    "m3u-s-" +
+                    seriesNo++;
+
+                series = {
+                    series_id:
+                        seriesId,
+
+                    name:
+                        ep.seriesName,
+
+                    cover:
+                        logo,
+
+                    category_id:
+                        catId,
+
+                    _source:
+                        "m3u"
+                };
+
+                seriesMap.set(
+                    seriesKey,
+                    series
+                );
+
+                seriesInfo[
+                    seriesId
+                ] = {
+                    episodes: {}
+                };
+            }
+
+            else if (
+                !series.cover &&
+                logo
+            ) {
+                series.cover =
+                    logo;
+            }
+
+            const episodeId =
+                "m3u-e-" +
+                idNum;
+
+            const ext =
+                _m3uExt(line);
+
+            const seasonKey =
+                String(
+                    ep.season
+                );
+
+            if (
+                !seriesInfo[
+                    series.series_id
+                ].episodes[
+                    seasonKey
+                ]
+            ) {
+                seriesInfo[
+                    series.series_id
+                ].episodes[
+                    seasonKey
+                ] = [];
+            }
+
+            seriesInfo[
+                series.series_id
+            ].episodes[
+                seasonKey
+            ].push({
+                id:
+                    episodeId,
+
+                episode_num:
+                    ep.episode,
+
+                title:
+                    name,
+
+                container_extension:
+                    ext,
+
+                stream_url:
+                    line,
+
+                _source:
+                    "m3u"
+            });
+
+            urlById[
+                episodeId
+            ] = line;
+        }
+
+
+        else if (isMovie) {
+            const movieId =
+                "m3u-m-" +
+                idNum;
+
+            const catId =
+                _m3uCatId(
+                    movieCats,
+                    group,
+                    "m"
+                );
+
+            movies.push({
+                stream_id:
+                    movieId,
+
+                name:
+                    name,
+
+                stream_icon:
+                    logo,
+
+                category_id:
+                    catId,
+
+                container_extension:
+                    _m3uExt(
+                        line
+                    ),
+
+                stream_url:
+                    line,
+
+                _source:
+                    "m3u"
+            });
+
+            urlById[
+                movieId
+            ] = line;
+        }
+
+
+        else {
+            const liveId =
+                "m3u-l-" +
+                idNum;
+
+            const catId =
+                _m3uCatId(
+                    liveCats,
+                    group,
+                    "l"
+                );
+
+            const channel = {
+                stream_id:
+                    liveId,
+
+                name:
+                    name,
+
+                stream_icon:
+                    logo,
+
+                epg_channel_id:
+                    tvgId,
+
+                category_id:
+                    catId,
+
+                stream_url:
+                    line,
+
+                _source:
+                    "m3u"
+            };
+
+            channels.push(
+                channel
+            );
+
+            channelById[
+                liveId
+            ] = channel;
+
+            urlById[
+                liveId
+            ] = line;
+        }
+
+        extinf = null;
+    }
+
+
+    return new Promise(
+        function (
+            resolve,
+            reject
+        ) {
+            function finishSeriesSort() {
+                const ids =
+                    Object.keys(
+                        seriesInfo
+                    );
+
+                let idIndex =
+                    0;
+
+                function sortStep() {
+                    const started =
+                        Date.now();
+
+                    let count =
+                        0;
+
+                    try {
+                        while (
+                            idIndex <
+                                ids.length &&
+                            count <
+                                40 &&
+                            Date.now() -
+                                started <
+                                SLICE_MAX_MS
+                        ) {
+                            const seriesId =
+                                ids[
+                                    idIndex++
+                                ];
+
+                            const bySeason =
+                                seriesInfo[
+                                    seriesId
+                                ].episodes;
+
+                            const seasons =
+                                Object.keys(
+                                    bySeason
+                                );
+
+                            for (
+                                let j = 0;
+                                j <
+                                    seasons.length;
+                                j++
+                            ) {
+                                const sn =
+                                    seasons[j];
+
+                                bySeason[
+                                    sn
+                                ].sort(
+                                    function (
+                                        a,
+                                        b
+                                    ) {
+                                        return (
+                                            (+a.episode_num || 0) -
+                                            (+b.episode_num || 0)
+                                        );
+                                    }
+                                );
+                            }
+
+                            count++;
+                        }
+                    }
+
+                    catch (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (
+                        idIndex <
+                        ids.length
+                    ) {
+                        setTimeout(
+                            sortStep,
+                            0
+                        );
+
+                        return;
+                    }
+
+                    const lib = {
+                        channels:
+                            channels,
+
+                        categories:
+                            _m3uCats(
+                                liveCats
+                            ),
+
+                        movies:
+                            movies,
+
+                        movieCategories:
+                            _m3uCats(
+                                movieCats
+                            ),
+
+                        series:
+                            Array.from(
+                                seriesMap.values()
+                            ),
+
+                        seriesCategories:
+                            _m3uCats(
+                                seriesCats
+                            ),
+
+                        seriesInfo:
+                            seriesInfo,
+
+                        urlById:
+                            urlById,
+
+                        channelById:
+                            channelById,
+
+                        epgUrl:
+                            epgUrl,
+
+                        epgMatch:
+                            "tvg-id"
+                    };
+
+                    publishProgress(
+                        true
+                    );
+
+                    resolve(lib);
+                }
+
+                sortStep();
+            }
+
+
+            function parseStep() {
+                const started =
+                    Date.now();
+
+                let handled =
+                    0;
+
+                try {
+                    while (
+                        lineIndex <
+                            lines.length &&
+                        handled <
+                            SLICE_MAX_LINES &&
+                        Date.now() -
+                            started <
+                            SLICE_MAX_MS
+                    ) {
+                        const line =
+                            lines[
+                                lineIndex++
+                            ].trim();
+
+                        handled++;
+
+                        if (!line) {
+                            continue;
+                        }
+
+                        if (
+                            line.startsWith(
+                                "#EXTINF"
+                            )
+                        ) {
+                            extinf =
+                                line;
+
+                            continue;
+                        }
+
+                        if (
+                            line.startsWith(
+                                "#"
+                            )
+                        ) {
+                            continue;
+                        }
+
+                        consumeMediaLine(
+                            line
+                        );
+                    }
+
+                    publishProgress(
+                        false
+                    );
+                }
+
+                catch (err) {
+                    reject(err);
+                    return;
+                }
+
+                if (
+                    lineIndex <
+                    lines.length
+                ) {
+                    setTimeout(
+                        parseStep,
+                        0
+                    );
+
+                    return;
+                }
+
+                finishSeriesSort();
+            }
+
+            /*
+             * Yield once before the first parse slice too. res.text() may have
+             * just completed a large network operation; give the browser one
+             * paint/input turn before CPU work starts.
+             */
+            setTimeout(
+                parseStep,
+                0
+            );
+        }
+    );
+}
+
+
+// Push a growing Live snapshot into the already booted UI without resetting the
+// user's scroll position. EPG is deliberately held until parsing is complete.
+function _m3uPublishProgressToLiveUI(
+    progress
+) {
+    try {
+        if (
+            !progress ||
+            !progress.channels ||
+            !document.getElementById(
+                "channel-list"
+            )
+        ) {
+            return;
+        }
+
+        allChannels =
+            progress.channels;
+
+        const status =
+            document.getElementById(
+                "status"
+            );
+
+        if (status) {
+            status.textContent =
+                progress.done
+                    ? (
+                        allChannels.length +
+                        " channels"
+                    )
+                    : (
+                        allChannels.length +
+                        " channels · loading…"
+                    );
+        }
+
+        /*
+         * channels.js resets scroll on a normal filter apply. During a growing
+         * list we explicitly preserve the current position so the remote stays
+         * usable while more channels arrive.
+         */
+        try {
+            _keepScrollOnApply =
+                true;
+        } catch (e) {}
+
+        if (
+            typeof applyFilters ===
+            "function"
+        ) {
+            applyFilters(
+                true
+            );
+        }
+
+        /*
+         * Rebuilding the category sidebar on every small batch can itself steal
+         * focus. Complete categories are rendered once at the end.
+         */
+        if (
+            progress.done &&
+            typeof renderCategories ===
+                "function"
+        ) {
+            renderCategories(
+                progress.categories ||
+                    []
+            );
+
+            if (
+                typeof updateSidebarActive ===
+                "function"
+            ) {
+                updateSidebarActive();
+            }
+        }
+    }
+
+    catch (e) {}
+}
+
+
+
 // ── Download playlist ──────────────────────────────────────────────────────────
 
-async function m3uFetchPlaylist(url) {
+async function m3uFetchPlaylist(
+    url,
+    onProgress,
+    forceNetwork
+) {
+    /*
+     * app.js may call m3uFetchPlaylist(url) as a background refresh after it
+     * booted from cache. For a fixed URL that work is deliberately disabled.
+     *
+     * Full-library callers (VOD/Series) pass forceNetwork=true below.
+     */
+    if (!forceNetwork) {
+        const cached =
+            m3uLoadCache(
+                url
+            );
+
+        if (cached) {
+            const cachedLib =
+                _m3uLibraryFromLiveCache(
+                    cached,
+                    {
+                        playlist_url:
+                            url
+                    }
+                );
+
+            _m3uLastLibrary =
+                cachedLib;
+
+            return cachedLib;
+        }
+    }
     const ctrl =
         new AbortController();
 
@@ -937,7 +2218,10 @@ async function m3uFetchPlaylist(url) {
         }
 
         const lib =
-            m3uParse(text);
+            await m3uParseProgressive(
+                text,
+                onProgress
+            );
 
         if (lib.epgUrl) {
             lib.epgUrl =
@@ -973,7 +2257,8 @@ let _m3uMemoryPromise = null;
 let _m3uLastLibrary = null;
 
 function m3uGetLibrary(
-    m3uCfg
+    m3uCfg,
+    onProgress
 ) {
     const url =
         m3uCfg &&
@@ -1000,7 +2285,9 @@ function m3uGetLibrary(
 
     _m3uMemoryPromise =
         m3uFetchPlaylist(
-            url
+            url,
+            onProgress,
+            true
         )
             .then(
                 function (lib) {
@@ -1047,18 +2334,196 @@ function m3uGetLibrary(
 async function m3uGetChannelsAndCategories(
     m3uCfg
 ) {
-    const lib =
-        await m3uGetLibrary(
+    /*
+     * Fast path: same exact URL = permanent cached Live list.
+     *
+     * Do this before creating _m3uMemoryPromise, otherwise simply opening Live
+     * would still download/parse the giant mixed M3U in the background.
+     */
+    const persistent =
+        m3uLoadCache(
             m3uCfg
         );
 
-    return {
-        channels:
-            lib.channels,
+    if (persistent) {
+        const cachedLib =
+            _m3uLibraryFromLiveCache(
+                persistent,
+                m3uCfg
+            );
 
-        categories:
-            lib.categories
-    };
+        _m3uLastLibrary =
+            cachedLib;
+
+        return {
+            channels:
+                cachedLib.channels,
+
+            categories:
+                cachedLib.categories
+        };
+    }
+
+    /*
+     * This function is used by Live TV startup. Do not make the first screen
+     * wait for Movies + Series parsing: resolve as soon as a useful Live batch
+     * exists, while the same parser continues filling the complete library.
+     */
+    let firstResolved =
+        false;
+
+    let resolveFirst;
+    let rejectFirst;
+
+    const firstReady =
+        new Promise(
+            function (
+                resolve,
+                reject
+            ) {
+                resolveFirst =
+                    resolve;
+
+                rejectFirst =
+                    reject;
+            }
+        );
+
+    try {
+        window.__M3U_PROGRESSIVE_LOADING__ =
+            true;
+    } catch (e) {}
+
+    function progress(
+        info
+    ) {
+        if (!info) {
+            return;
+        }
+
+        if (
+            !firstResolved &&
+            (
+                info.channels.length >=
+                    32 ||
+                info.done
+            )
+        ) {
+            firstResolved =
+                true;
+
+            resolveFirst({
+                channels:
+                    info.channels,
+
+                categories:
+                    info.categories
+            });
+
+            /*
+             * app.js resumes from its await as a microtask before the next
+             * parser timer. That gives _bootUI() time to create the list before
+             * subsequent progress snapshots are published.
+             */
+            return;
+        }
+
+        if (
+            firstResolved
+        ) {
+            _m3uPublishProgressToLiveUI(
+                info
+            );
+        }
+    }
+
+    const fullPromise =
+        m3uGetLibrary(
+            m3uCfg,
+            progress
+        );
+
+    fullPromise
+        .then(
+            function (lib) {
+                try {
+                    window.__M3U_PROGRESSIVE_LOADING__ =
+                        false;
+                } catch (e) {}
+
+                if (
+                    !firstResolved
+                ) {
+                    firstResolved =
+                        true;
+
+                    resolveFirst({
+                        channels:
+                            lib.channels,
+
+                        categories:
+                            lib.categories
+                    });
+                }
+
+                /*
+                 * Publish the final list/categories and only then persist the
+                 * complete Live cache. A timer lets the final UI paint first.
+                 */
+                setTimeout(
+                    function () {
+                        _m3uPublishProgressToLiveUI({
+                            channels:
+                                lib.channels,
+
+                            categories:
+                                lib.categories,
+
+                            done:
+                                true
+                        });
+
+                        setTimeout(
+                            function () {
+                                m3uSaveCache(
+                                    lib.channels,
+                                    lib.categories,
+                                    {
+                                        playlist_url:
+                                            m3uCfg &&
+                                            m3uCfg.playlist_url,
+
+                                        epgUrl:
+                                            lib.epgUrl,
+
+                                        epgMatch:
+                                            lib.epgMatch
+                                    }
+                                );
+                            },
+                            350
+                        );
+                    },
+                    0
+                );
+            }
+        )
+        .catch(
+            function (err) {
+                try {
+                    window.__M3U_PROGRESSIVE_LOADING__ =
+                        false;
+                } catch (e) {}
+
+                if (
+                    !firstResolved
+                ) {
+                    rejectFirst(err);
+                }
+            }
+        );
+
+    return firstReady;
 }
 
 async function m3uGetVodCategories(
