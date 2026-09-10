@@ -246,22 +246,6 @@
 
         loadEPGForCurrentCategory =
             function () {
-                /*
-                 * While a giant mixed M3U is still being parsed, channel rows
-                 * must remain the priority. Re-running XMLTV/EPG work after
-                 * every progressive batch would cancel out the responsiveness
-                 * gained by the chunked parser.
-                 */
-                try {
-                    if (
-                        window.__M3U_PROGRESSIVE_LOADING__
-                    ) {
-                        return Promise.resolve();
-                    }
-                }
-
-                catch (e) {}
-
                 var self =
                     this;
 
