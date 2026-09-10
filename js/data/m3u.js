@@ -1,10 +1,122 @@
 // ── M3U / M3U8 playlist support ───────────────────────────────────────────────
-// Persistent fixed-URL Live cache + progressive M3U parser.
+// Persistent fixed-URL Live cache + progressive M3U parser. FIX v3
 // Parses M3U playlists, separates Live TV / Movies / Series,
 // and provides automatic XMLTV EPG support for M3U profiles.
 
 const M3U_CACHE_KEY =
     "iptv_m3u_fixed_live_v2";
+
+
+
+function m3uLoadConfig() {
+    // Prefer the active profile because it also contains epg_url / epg_match.
+    try {
+        const profiles =
+            JSON.parse(
+                localStorage.getItem(
+                    "iptv_profiles"
+                ) ||
+                "[]"
+            );
+
+        const activeId =
+            localStorage.getItem(
+                "iptv_active_profile"
+            );
+
+        if (
+            Array.isArray(
+                profiles
+            ) &&
+            profiles.length
+        ) {
+            let active =
+                null;
+
+            if (activeId) {
+                active =
+                    profiles.find(
+                        function (p) {
+                            return (
+                                String(
+                                    p.id
+                                ) ===
+                                String(
+                                    activeId
+                                )
+                            );
+                        }
+                    );
+            }
+
+            if (!active) {
+                active =
+                    profiles.find(
+                        function (p) {
+                            return (
+                                p &&
+                                p.type ===
+                                    "m3u" &&
+                                p.playlist_url
+                            );
+                        }
+                    );
+            }
+
+            if (
+                active &&
+                active.type ===
+                    "m3u" &&
+                active.playlist_url
+            ) {
+                return Promise.resolve(
+                    active
+                );
+            }
+        }
+    }
+
+    catch (e) {}
+
+    let stored =
+        null;
+
+    try {
+        stored =
+            JSON.parse(
+                localStorage.getItem(
+                    "iptv_m3u_config"
+                )
+            );
+    }
+
+    catch (e) {}
+
+    if (
+        stored &&
+        stored.playlist_url
+    ) {
+        return Promise.resolve(
+            stored
+        );
+    }
+
+    if (
+        window.IPTV_M3U_CONFIG &&
+        window.IPTV_M3U_CONFIG
+            .playlist_url
+    ) {
+        return Promise.resolve(
+            window.IPTV_M3U_CONFIG
+        );
+    }
+
+    return Promise.reject(
+        new Error(
+            "No M3U playlist URL configured"
+        )
+    );
+}
 
 
 /*
